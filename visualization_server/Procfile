@@ -1,0 +1,1 @@
+web: python app.py --config ../train/config.yaml --port $PORT

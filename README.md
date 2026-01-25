@@ -28,6 +28,8 @@ VAE-Planner consists of the following structure:
 3. **Decoder**: Reconstructs 160-dimensional trajectory vectors from 32-dimensional latent z
    - Architecture: 32 → 128 → 256 → 512 → 160
 
+For detailed architecture documentation, see [VAE_ARCHITECTURE.md](VAE_ARCHITECTURE.md).
+
 ### Training Results Example
 
 <img src="assets/VAE_results_1.gif" alt="VAE Results" width="800"/>
@@ -214,6 +216,12 @@ python app.py --checkpoint <checkpoint_path> --config ../train/config.yaml --por
 
 For more details, see [visualization_server/README.md](visualization_server/README.md).
 
+### Deploy to GitHub Pages
+
+You can deploy the visualization server to GitHub Pages for public access. The frontend will be hosted on GitHub Pages, while the backend API needs to be hosted separately (e.g., Render, Railway, or Heroku).
+
+See [GITHUB_PAGES_SETUP.md](GITHUB_PAGES_SETUP.md) for detailed deployment instructions.
+
 ## 📁 Project Structure
 
 ```
@@ -283,6 +291,8 @@ Automatically performs latent space analysis after training:
 - Classifies trajectories into stop, left turn, right turn, and straight
 - Projects latent space to 2D using PCA
 - Visualizes trajectory samples by category
+
+For detailed classification criteria, see [TRAJECTORY_CLASSIFICATION.md](TRAJECTORY_CLASSIFICATION.md).
 
 ## 📝 Notes
 

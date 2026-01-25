@@ -105,6 +105,45 @@ header h1 {
   opacity: 0.9;
 }
 
+.method-selector {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.method-selector label {
+  font-size: 0.85rem;
+  opacity: 0.9;
+}
+
+.method-selector button {
+  background: rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: white;
+  padding: 6px 16px;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.method-selector button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.3);
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+.method-selector button.active {
+  background: white;
+  color: var(--primary-color);
+  border-color: white;
+}
+
+.method-selector button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .main-content {
   padding: 24px;
   overflow-y: auto;

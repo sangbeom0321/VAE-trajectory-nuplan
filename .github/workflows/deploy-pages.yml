@@ -1,0 +1,62 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: visualization_server/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./visualization_server
+        run: npm ci
+
+      - name: Build React app
+        working-directory: ./visualization_server
+        env:
+          REACT_APP_API_URL: ${{ secrets.REACT_APP_API_URL || 'https://your-backend-url.herokuapp.com' }}
+        run: |
+          # 레포지토리 이름에 따라 PUBLIC_URL 자동 설정
+          REPO_NAME=$(echo "${{ github.repository }}" | cut -d'/' -f2)
+          export PUBLIC_URL="/${REPO_NAME}"
+          echo "Building with PUBLIC_URL=${PUBLIC_URL}"
+          npm run build
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: './visualization_server/build'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

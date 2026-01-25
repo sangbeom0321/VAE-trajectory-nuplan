@@ -51,6 +51,10 @@ train/train_output/
 !**/package.json
 !**/package-lock.json
 
+# 대용량 이미지 파일 (선택사항)
+trajectory_visualizations/*.png
+latent_analysis/*.png
+
 # Wandb
 wandb/
 *.wandb
@@ -79,6 +83,9 @@ yarn-error.log*
 # React 빌드 결과 (빌드된 파일은 포함하지 않음)
 visualization_server/build/
 visualization_server/client_build/
+
+# GitHub Pages (docs 폴더는 GitHub Actions가 자동으로 생성)
+# docs/ 폴더는 GitHub Pages 배포용이므로 .gitignore에 포함하지 않음
 
 # 환경 변수
 .env

@@ -16,15 +16,22 @@ class App extends Component {
       selectedLatent: null,  // hover된 latent z
       trajectoryBounds: null,  // 모든 trajectory의 전체 범위
       loading: false,
-      error: null
+      error: null,
+      method: 'tsne'  // 기본값: t-SNE
     };
     
     this.handleLatentHover = this.handleLatentHover.bind(this);
+    this.handleMethodChange = this.handleMethodChange.bind(this);
   }
 
   componentDidMount() {
     this.loadDatasetInfo();
-    this.loadLatentSpace();
+    this.loadLatentSpace(this.state.method);
+  }
+  
+  handleMethodChange(method) {
+    this.setState({ method, latentSpaceData: null, selectedTrajectory: null, selectedLatent: null });
+    this.loadLatentSpace(method);
   }
 
   async loadDatasetInfo() {
@@ -37,7 +44,7 @@ class App extends Component {
     }
   }
 
-  async loadLatentSpace() {
+  async loadLatentSpace(method = 'tsne') {
     this.setState({ loading: true, error: null });
     
     try {
@@ -45,11 +52,30 @@ class App extends Component {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          method: 'tsne',  // t-SNE 사용 (더 나은 클러스터링 시각화)
-          max_samples: 1000  // 최대 1000개 샘플
+          method: method,  // 'tsne' or 'umap'
+          max_samples: 10000  // 샘플 수를 10,000개로 고정
         })
       });
+      
+      // 응답 상태 확인
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: `HTTP ${response.status}: ${response.statusText}` }));
+        throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+      }
+      
       const data = await response.json();
+      
+      // 에러 응답 확인
+      if (data.error) {
+        throw new Error(data.error);
+      }
+      
+      // 데이터 유효성 확인
+      if (!data.projected_points || !Array.isArray(data.projected_points)) {
+        throw new Error('Invalid response format: missing projected_points');
+      }
+      
+      console.log(`Loaded ${data.num_samples || data.projected_points.length} samples (total dataset: ${data.total_dataset_size || 'unknown'})`);
       
       // 모든 trajectory의 전체 범위 계산
       let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
@@ -88,6 +114,7 @@ class App extends Component {
         loading: false 
       });
     } catch (error) {
+      console.error('Error loading latent space:', error);
       this.setState({ 
         error: `Failed to load latent space: ${error.message}`,
         loading: false 
@@ -131,6 +158,23 @@ class App extends Component {
                 <span>Latent Dim: {datasetInfo.latent_dim}</span>
               </div>
             )}
+            <div className="method-selector">
+              <label>Method: </label>
+              <button 
+                className={this.state.method === 'tsne' ? 'active' : ''}
+                onClick={() => this.handleMethodChange('tsne')}
+                disabled={this.state.loading}
+              >
+                t-SNE
+              </button>
+              <button 
+                className={this.state.method === 'umap' ? 'active' : ''}
+                onClick={() => this.handleMethodChange('umap')}
+                disabled={this.state.loading}
+              >
+                UMAP
+              </button>
+            </div>
           </div>
         </header>
 

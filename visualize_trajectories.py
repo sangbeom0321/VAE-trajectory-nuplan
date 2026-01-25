@@ -9,13 +9,13 @@ import os
 from tqdm import tqdm
 
 
-def visualize_trajectories(data_path, num_samples=100000, max_display=None, save_dir='./trajectory_visualizations'):
+def visualize_trajectories(data_path, num_samples=None, max_display=None, save_dir='./trajectory_visualizations'):
     """
     Trajectory 데이터 시각화
     
     Args:
         data_path: .npz 파일 경로
-        num_samples: 시각화할 샘플 수 (최대)
+        num_samples: 시각화할 샘플 수 (None이면 전체 데이터 사용)
         max_display: 실제로 그릴 샘플 수 (None이면 전체 샘플 모두 그림)
         save_dir: 저장 디렉토리
     """
@@ -36,9 +36,11 @@ def visualize_trajectories(data_path, num_samples=100000, max_display=None, save
         trajectories = trajectories_xy.reshape(-1, 160).astype(np.float32)
         print(f"변환 후 shape: {trajectories.shape}")
     
-    # 샘플 수 제한
-    num_samples = min(num_samples, len(trajectories))
-    trajectories = trajectories[:num_samples]
+    # 샘플 수 제한 (num_samples가 None이면 전체 사용)
+    if num_samples is not None:
+        num_samples = min(num_samples, len(trajectories))
+        trajectories = trajectories[:num_samples]
+    print(f"전체 데이터 수: {len(trajectories)}")
     
     # (N, 160) -> (N, 80, 2)로 reshape
     trajectories_xy = trajectories.reshape(-1, 80, 2)
@@ -181,8 +183,8 @@ def visualize_trajectories(data_path, num_samples=100000, max_display=None, save
 def main():
     parser = argparse.ArgumentParser(description='Trajectory 시각화')
     parser.add_argument('--data_path', type=str, required=True, help='.npz 파일 경로')
-    parser.add_argument('--num_samples', type=int, default=100000, help='시각화할 샘플 수')
-    parser.add_argument('--max_display', type=int, default=5000, help='실제로 그릴 샘플 수 (오버레이용, 기본값: 5000)')
+    parser.add_argument('--num_samples', type=lambda x: None if x == 'None' else int(x), default=None, help='시각화할 샘플 수 (None이면 전체 데이터 사용, 기본값: None)')
+    parser.add_argument('--max_display', type=lambda x: None if x == 'None' else int(x), default=None, help='실제로 그릴 샘플 수 (오버레이용, None이면 전체, 기본값: None)')
     parser.add_argument('--save_dir', type=str, default='./trajectory_visualizations', help='저장 디렉토리')
     
     args = parser.parse_args()

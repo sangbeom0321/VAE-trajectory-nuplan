@@ -14,6 +14,12 @@ import yaml
 from pathlib import Path
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
+try:
+    import umap
+    UMAP_AVAILABLE = True
+except ImportError:
+    UMAP_AVAILABLE = False
+    print("Warning: UMAP not available. Install with: pip install umap-learn")
 
 # 프로젝트 루트를 sys.path에 추가
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -298,117 +304,173 @@ def get_trajectory_latent(trajectory_idx):
 @app.route('/api/latent-space', methods=['POST'])
 def compute_latent_space():
     """여러 trajectory의 Latent Space를 계산하고 2D로 projection"""
-    if model is None or dataset is None:
-        return jsonify({'error': 'Model or dataset not loaded'}), 500
-    
-    data = request.json
-    trajectory_indices = data.get('trajectory_indices', None)
-    method = data.get('method', 'pca')  # 'pca' or 'tsne'
-    max_samples = data.get('max_samples', 1000)  # 기본값: 1000개
-    
-    # trajectory_indices가 없으면 샘플링
-    if trajectory_indices is None:
-        num_samples = min(max_samples, len(dataset))
-        trajectory_indices = np.random.choice(len(dataset), num_samples, replace=False).tolist()
-    
-    # 각 trajectory의 latent z 계산
-    latent_vectors = []
-    valid_indices = []
-    
-    for idx in trajectory_indices:
-        if idx >= len(dataset):
-            continue
+    try:
+        if model is None or dataset is None:
+            return jsonify({'error': 'Model or dataset not loaded'}), 500
         
-        try:
-            latent_z, _ = compute_latent_for_trajectory(idx)
-            latent_vectors.append(latent_z)
-            valid_indices.append(idx)
-        except Exception as e:
-            print(f'Error processing trajectory {idx}: {e}')
-            continue
-    
-    if len(latent_vectors) == 0:
-        return jsonify({'error': 'No valid trajectories processed'}), 400
-    
-    latent_matrix = np.array(latent_vectors)
-    
-    # 2D Projection
-    if method == 'pca':
-        reducer = PCA(n_components=2)
-        projected = reducer.fit_transform(latent_matrix)
-        explained_variance = reducer.explained_variance_ratio_
-        print(f'PCA explained variance: PC1={explained_variance[0]:.2%}, PC2={explained_variance[1]:.2%}')
-    elif method == 'tsne':
-        # t-SNE는 더 많은 정보를 보존하지만 계산이 느림
-        perplexity = min(30, max(5, len(latent_vectors) // 4))  # 적절한 perplexity 설정
-        reducer = TSNE(n_components=2, random_state=42, perplexity=perplexity, n_iter=1000)
-        projected = reducer.fit_transform(latent_matrix)
-        print(f't-SNE projection completed with perplexity={perplexity}')
-    else:
-        return jsonify({'error': 'Invalid method. Use "pca" or "tsne"'}), 400
-    
-    # Latent z의 실제 분산 확인 (디버깅용 - Posterior Collapse 감지)
-    latent_std = np.std(latent_matrix, axis=0)
-    latent_mean = np.mean(latent_matrix, axis=0)
-    overall_std = np.std(latent_matrix)
-    overall_mean = np.mean(latent_matrix)
-    
-    print(f'\n=== Latent Space Analysis ===')
-    print(f'Latent z dimension-wise std: mean={np.mean(latent_std):.4f}, min={np.min(latent_std):.4f}, max={np.max(latent_std):.4f}')
-    print(f'Latent z overall: mean={overall_mean:.4f}, std={overall_std:.4f}')
-    print(f'Latent z range: min={np.min(latent_matrix):.4f}, max={np.max(latent_matrix):.4f}')
-    
-    # Posterior Collapse 감지
-    if np.mean(latent_std) < 0.1:
-        print(f'⚠️  WARNING: Very low latent std ({np.mean(latent_std):.4f}) - Possible POSTERIOR COLLAPSE!')
-        print(f'   This means all trajectories map to similar latent z values.')
-        print(f'   Solution: Reduce KL weight (currently {config["model"]["kl_weight"]}) or use β-VAE annealing.')
-    elif np.mean(latent_std) < 0.5:
-        print(f'⚠️  CAUTION: Low latent std ({np.mean(latent_std):.4f}) - May indicate weak latent representation.')
-    else:
-        print(f'✓ Latent std looks healthy ({np.mean(latent_std):.4f})')
-    print('=' * 30 + '\n')
-    
-    # 결과 반환
-    result = []
-    for i, idx in enumerate(valid_indices):
-        trajectory_xy = trajectory_cache.get(idx, None)
-        if trajectory_xy is None:
-            denormalize = dataset.normalize  # 데이터셋이 정규화되어 있으면 역정규화, 아니면 그대로 사용
-            trajectory_xy_np = dataset.get_trajectory_as_xy(idx, denormalize=denormalize)
-            trajectory_xy = trajectory_xy_np.tolist()
-            trajectory_cache[idx] = trajectory_xy
+        data = request.json
+        if data is None:
+            return jsonify({'error': 'Invalid request data'}), 400
+        
+        trajectory_indices = data.get('trajectory_indices', None)
+        method = data.get('method', 'pca')  # 'pca', 'tsne', or 'umap'
+        max_samples = data.get('max_samples', None)  # 기본값: None (전체 사용)
+        
+        # UMAP 사용 가능 여부 확인
+        if method == 'umap' and not UMAP_AVAILABLE:
+            return jsonify({'error': 'UMAP is not available. Install with: pip install umap-learn'}), 400
+        
+        # 샘플 수를 10,000개로 고정
+        MAX_SAMPLES = 10000
+        
+        # trajectory_indices가 없으면 샘플링
+        if trajectory_indices is None:
+            if max_samples is None:
+                # 기본값: 10,000개로 고정
+                num_samples = min(MAX_SAMPLES, len(dataset))
+                print(f'샘플 수를 {num_samples}개로 고정합니다 (전체: {len(dataset)}개)')
+                trajectory_indices = np.random.choice(len(dataset), num_samples, replace=False).tolist()
+            else:
+                # max_samples가 지정된 경우, 최대값으로 제한
+                if max_samples > MAX_SAMPLES:
+                    print(f'⚠️  샘플 수를 {MAX_SAMPLES}개로 제한합니다 (요청: {max_samples}개)')
+                    max_samples = MAX_SAMPLES
+                
+                num_samples = min(max_samples, len(dataset))
+                trajectory_indices = np.random.choice(len(dataset), num_samples, replace=False).tolist()
+        
+        print(f'Processing {len(trajectory_indices)} trajectories with {method}...')
+        
+        # 각 trajectory의 latent z 계산
+        latent_vectors = []
+        valid_indices = []
+        
+        for idx in trajectory_indices:
+            if idx >= len(dataset):
+                continue
+            
+            try:
+                latent_z, _ = compute_latent_for_trajectory(idx)
+                latent_vectors.append(latent_z)
+                valid_indices.append(idx)
+            except Exception as e:
+                print(f'Error processing trajectory {idx}: {e}')
+                continue
+        
+        if len(latent_vectors) == 0:
+            return jsonify({'error': 'No valid trajectories processed'}), 400
+        
+        print(f'Successfully processed {len(latent_vectors)} trajectories')
+        
+        latent_matrix = np.array(latent_vectors)
+        
+        # 2D Projection
+        if method == 'pca':
+            reducer = PCA(n_components=2)
+            projected = reducer.fit_transform(latent_matrix)
+            explained_variance = reducer.explained_variance_ratio_
+            print(f'PCA explained variance: PC1={explained_variance[0]:.2%}, PC2={explained_variance[1]:.2%}')
+        elif method == 'tsne':
+            # t-SNE는 더 많은 정보를 보존하지만 계산이 느림
+            perplexity = min(30, max(5, len(latent_vectors) // 4))  # 적절한 perplexity 설정
+            print(f'Running t-SNE with perplexity={perplexity}...')
+            reducer = TSNE(n_components=2, random_state=42, perplexity=perplexity, max_iter=1000)
+            projected = reducer.fit_transform(latent_matrix)
+            print(f't-SNE projection completed with perplexity={perplexity}')
+        elif method == 'umap':
+            # UMAP은 빠르고 좋은 클러스터링 결과를 제공
+            n_neighbors = min(15, max(5, len(latent_vectors) // 10))  # 적절한 n_neighbors 설정
+            min_dist = 0.1  # 클러스터 간 최소 거리
+            print(f'Running UMAP with n_neighbors={n_neighbors}, min_dist={min_dist}...')
+            reducer = umap.UMAP(n_components=2, n_neighbors=n_neighbors, min_dist=min_dist, random_state=42)
+            projected = reducer.fit_transform(latent_matrix)
+            print(f'UMAP projection completed')
         else:
-            trajectory_xy_np = np.array(trajectory_xy)
+            return jsonify({'error': 'Invalid method. Use "pca", "tsne", or "umap"'}), 400
         
-        # Trajectory 분류
-        label = classify_trajectory(trajectory_xy_np)
+        # Latent z의 실제 분산 확인 (디버깅용 - Posterior Collapse 감지)
+        latent_std = np.std(latent_matrix, axis=0)
+        latent_mean = np.mean(latent_matrix, axis=0)
+        overall_std = np.std(latent_matrix)
+        overall_mean = np.mean(latent_matrix)
         
-        result.append({
-            'index': idx,
-            'x': float(projected[i, 0]),
-            'y': float(projected[i, 1]),
-            'latent': latent_vectors[i],
-            'trajectory': trajectory_xy,  # 원본 trajectory 포함
-            'label': label  # 분류 라벨 추가
-        })
-    
-    return jsonify({
-        'projected_points': result,
-        'method': method,
-        'reducer_info': {
-            'mean': reducer.mean_.tolist() if hasattr(reducer, 'mean_') else None,
-            'components': reducer.components_.tolist() if hasattr(reducer, 'components_') else None
-        },
-        'latent_stats': {
-            'mean_std': float(np.mean(latent_std)),
-            'min_std': float(np.min(latent_std)),
-            'max_std': float(np.max(latent_std)),
-            'overall_mean': float(overall_mean),
-            'overall_std': float(overall_std),
-            'posterior_collapse_warning': bool(np.mean(latent_std) < 0.1)  # numpy bool_를 Python bool로 변환
+        print(f'\n=== Latent Space Analysis ===')
+        print(f'Latent z dimension-wise std: mean={np.mean(latent_std):.4f}, min={np.min(latent_std):.4f}, max={np.max(latent_std):.4f}')
+        print(f'Latent z overall: mean={overall_mean:.4f}, std={overall_std:.4f}')
+        print(f'Latent z range: min={np.min(latent_matrix):.4f}, max={np.max(latent_matrix):.4f}')
+        
+        # Posterior Collapse 감지
+        if np.mean(latent_std) < 0.1:
+            print(f'⚠️  WARNING: Very low latent std ({np.mean(latent_std):.4f}) - Possible POSTERIOR COLLAPSE!')
+            print(f'   This means all trajectories map to similar latent z values.')
+            print(f'   Solution: Reduce KL weight (currently {config["model"]["kl_weight"]}) or use β-VAE annealing.')
+        elif np.mean(latent_std) < 0.5:
+            print(f'⚠️  CAUTION: Low latent std ({np.mean(latent_std):.4f}) - May indicate weak latent representation.')
+        else:
+            print(f'✓ Latent std looks healthy ({np.mean(latent_std):.4f})')
+        print('=' * 30 + '\n')
+        
+        # 결과 반환
+        result = []
+        for i, idx in enumerate(valid_indices):
+            trajectory_xy = trajectory_cache.get(idx, None)
+            if trajectory_xy is None:
+                denormalize = dataset.normalize  # 데이터셋이 정규화되어 있으면 역정규화, 아니면 그대로 사용
+                trajectory_xy_np = dataset.get_trajectory_as_xy(idx, denormalize=denormalize)
+                trajectory_xy = trajectory_xy_np.tolist()
+                trajectory_cache[idx] = trajectory_xy
+            else:
+                trajectory_xy_np = np.array(trajectory_xy)
+            
+            # Trajectory 분류
+            label = classify_trajectory(trajectory_xy_np)
+            
+            # latent_vectors[i]는 이미 list (compute_latent_for_trajectory에서 .tolist() 호출)
+            latent_z_value = latent_vectors[i]
+            if isinstance(latent_z_value, np.ndarray):
+                latent_z_value = latent_z_value.tolist()
+            
+            result.append({
+                'index': idx,
+                'x': float(projected[i, 0]),
+                'y': float(projected[i, 1]),
+                'latent': latent_z_value,  # 이미 list이거나 numpy array를 list로 변환
+                'trajectory': trajectory_xy,  # 원본 trajectory 포함
+                'label': label  # 분류 라벨 추가
+            })
+        
+        response_data = {
+            'projected_points': result,
+            'method': method,
+            'reducer_info': {
+                'mean': reducer.mean_.tolist() if hasattr(reducer, 'mean_') else None,
+                'components': reducer.components_.tolist() if hasattr(reducer, 'components_') else None
+            },
+            'latent_stats': {
+                'mean_std': float(np.mean(latent_std)),
+                'min_std': float(np.min(latent_std)),
+                'max_std': float(np.max(latent_std)),
+                'overall_mean': float(overall_mean),
+                'overall_std': float(overall_std),
+                'posterior_collapse_warning': bool(np.mean(latent_std) < 0.1)  # numpy bool_를 Python bool로 변환
+            },
+            'num_samples': len(result),
+            'total_dataset_size': len(dataset)
         }
-    })
+        
+        print(f'Returning response with {len(result)} points')
+        return jsonify(response_data)
+    
+    except Exception as e:
+        import traceback
+        error_msg = str(e)
+        traceback_str = traceback.format_exc()
+        print(f'Error in compute_latent_space: {error_msg}')
+        print(traceback_str)
+        return jsonify({
+            'error': f'Server error: {error_msg}',
+            'traceback': traceback_str
+        }), 500
 
 
 @app.route('/api/find-nearest-trajectory', methods=['POST'])
