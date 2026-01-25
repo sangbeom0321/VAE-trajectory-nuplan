@@ -65,6 +65,11 @@ pip install -r requirements.txt
 npm install
 ```
 
+**Optional**: For UMAP visualization support:
+```bash
+pip install umap-learn
+```
+
 ## 📊 Data Preparation
 
 ### Extracting Trajectories from nuPlan Dataset
@@ -201,6 +206,7 @@ The server automatically:
 - Finds and uses the latest checkpoint from `train/train_output`
 - Loads dataset path from config file
 - Serves the integrated React client
+- Limits visualization to 5,000 samples by default for performance
 
 ### Manual Checkpoint Specification
 
@@ -208,11 +214,49 @@ The server automatically:
 python app.py --checkpoint <checkpoint_path> --config ../train/config.yaml --port 5000
 ```
 
+### Usage Guide
+
+1. **Select Projection Method**: Choose PCA, t-SNE, or UMAP from the header
+   - PCA: Best for Generate mode (exact inverse transformation)
+   - t-SNE/UMAP: Better for visualizing clusters in Browse mode
+
+2. **Browse Mode**:
+   - Move mouse over latent space to see existing trajectories
+   - Trajectories are color-coded by type (stop, left, right, straight)
+   - Click on data points to lock a trajectory view
+
+3. **Generate Mode**:
+   - Click anywhere in latent space (including empty areas) to generate new trajectories
+   - View the 2D coordinates and 32-dimensional latent z vector
+   - Generated trajectories are marked with ✨ indicator
+   - **Note**: PCA provides exact inverse transformation, while t-SNE/UMAP use interpolation
+
+4. **Trajectory Information**:
+   - Generated trajectories show both 2D projection coordinates and full latent z vector
+   - Trajectory classification (stop/left/right/straight) is automatically displayed
+
 ### Key Features
 
-- **Latent Space Visualization**: Trajectories from the dataset are projected to 2D in latent space (PCA or t-SNE)
-- **Interactive Hover**: Moving the mouse in latent space highlights the nearest latent z and displays the corresponding original input trajectory
-- **Trajectory Visualization**: Original trajectories are visualized with start point (green), end point (red), and path (red line)
+- **Multiple Projection Methods**: Choose between PCA, t-SNE, or UMAP for 2D visualization
+  - **PCA**: Linear transformation with exact inverse (recommended for Generate mode)
+  - **t-SNE**: Non-linear transformation with better clustering visualization
+  - **UMAP**: Fast non-linear transformation with good clustering results
+
+- **Two Interaction Modes**:
+  - **Browse Mode**: Hover over latent space to view existing trajectories from the dataset
+  - **Generate Mode**: Click anywhere in latent space to generate new trajectories from that location's latent z
+
+- **Trajectory Generation**: 
+  - Click on empty space in Generate mode to decode latent z and create new trajectories
+  - View 2D coordinates and 32-dimensional latent z vector for generated trajectories
+  - PCA allows exact inverse transformation, while t-SNE/UMAP use interpolation
+
+- **Interactive Visualization**:
+  - Trajectories are color-coded by type (stop, left turn, right turn, straight)
+  - Hover highlights nearest points in Browse mode
+  - Generated trajectories are marked with ✨ indicator
+
+- **Sample Management**: Automatically limits to 5,000 samples for performance (configurable)
 
 For more details, see [visualization_server/README.md](visualization_server/README.md).
 
