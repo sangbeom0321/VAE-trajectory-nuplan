@@ -1,0 +1,45 @@
+# 8초 경로 VAE 학습 설정 파일
+
+# Data Configuration
+data:
+  # 8초 경로 데이터셋 설정
+  trajectory_data_path: "$HOME/99_dataset/01_nuplan/dataset/exp2/trajectories_8s.npz"
+  # 정규화 파라미터 경로 (없으면 데이터셋에서 자동 계산)
+  trajectory_norm_params_path: "$HOME/99_dataset/01_nuplan/dataset/exp2/trajectories_8s_norm_params.json"
+  # 정규화 적용 여부
+  normalize: true
+  # 사용할 최대 샘플 수 (None이면 전체 데이터 사용)
+  max_samples: 100000
+
+# Model Configuration
+model:
+  # Trajectory Configuration
+  future_horizon: 80  # T_future: 미래 프레임 수 (8초 * 10Hz = 80)
+  future_dim: 2  # [x, y]
+  
+  # VAE Configuration
+  latent_dim: 32  # Latent variable z의 차원 (8초 경로용: 32차원)
+  kl_weight: 0.5  # KLD Loss 가중치 (β 값) - annealing 사용 시 최종 값
+  # β-VAE Annealing 설정
+  kl_annealing:
+    enabled: true  # Annealing 사용 여부
+    start_weight: 0.01  # 시작 KL weight (낮게 시작하여 posterior collapse 방지)
+    end_weight: 0.5  # 최종 KL weight (config의 kl_weight와 동일하게 설정)
+    annealing_type: "linear"  # "linear" 또는 "cosine"
+    warmup_epochs: 2  # 처음 N 에포크 동안은 start_weight 유지 (reconstruction에 집중)
+
+# Training Configuration
+training:
+  batch_size: 32
+  num_epochs: 5
+  learning_rate: 1e-4
+  weight_decay: 1e-5
+  gradient_clip: 1.0
+
+# Logging Configuration
+logging:
+  log_dir: "./logs"
+  save_dir: "./checkpoints"
+  log_interval: 100  # 배치마다 로깅 간격
+
+  save_interval: 5  # 에포크마다 체크포인트 저장 간격

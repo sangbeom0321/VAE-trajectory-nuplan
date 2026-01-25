@@ -1,0 +1,19 @@
+.trajectory-canvas {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+
+.trajectory-canvas svg {
+  width: 100%;
+  height: auto;
+  min-height: 400px;
+  border-radius: 8px;
+  background-color: #fcfcfc;
+  background-image: radial-gradient(#e2e8f0 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+.trajectory-path {
+  filter: drop-shadow(0 0 3px rgba(229, 57, 53, 0.5));
+}

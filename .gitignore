@@ -1,0 +1,95 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# PyTorch
+*.pth
+*.pt
+*.ckpt
+
+# 학습 결과 및 로그
+train/train_output/
+*.log
+*.json
+!train/config.yaml
+!**/package.json
+!**/package-lock.json
+
+# Wandb
+wandb/
+*.wandb
+
+# 데이터셋 (대용량 파일)
+*.npz
+*.h5
+*.hdf5
+*.pkl
+*.pickle
+*.parquet
+*.db
+*.sqlite
+
+# 시각화 결과 이미지 (선택사항 - 필요시 주석 해제)
+# trajectory_visualizations/*.png
+# latent_analysis/*.png
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# React 빌드 결과 (빌드된 파일은 포함하지 않음)
+visualization_server/build/
+visualization_server/client_build/
+
+# 환경 변수
+.env
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 기타
+*.tmp
+*.bak
+*.cache
