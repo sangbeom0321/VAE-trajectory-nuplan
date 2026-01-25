@@ -30,7 +30,7 @@ VAE-Planner consists of the following structure:
 
 ### Training Results Example
 
-![VAE Results](assets/VAE_results_1.gif)
+<img src="assets/VAE_results_1.gif" alt="VAE Results" width="800"/>
 
 ## 📦 Installation
 
