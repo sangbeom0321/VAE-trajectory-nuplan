@@ -19,7 +19,7 @@ class LatentSpacePlot extends Component {
   }
 
   renderChart() {
-    const { data, onHover } = this.props;
+    const { data, onHover, onClick, method, mode } = this.props;
     if (!data || data.length === 0 || !this.nodeRef.current) return;
 
     const width = 800;
@@ -106,59 +106,94 @@ class LatentSpacePlot extends Component {
       .attr("stroke", d => labelColors[d.label] || "#4f46e5")
       .attr("stroke-width", 1);
 
-    // 마우스 hover 이벤트
+    // 마우스 hover 이벤트 (Browse 모드에서만 활성화)
     let hoverTimeout = null;
     let hoveredPoint = null;
     
-    hoverRect.on("mousemove", async (event) => {
+    if (mode !== 'generate' && onHover) {
+      hoverRect.on("mousemove", async (event) => {
+        const [mouseX, mouseY] = d3.pointer(event);
+        const x = xScale.invert(mouseX);
+        const y = yScale.invert(mouseY);
+        
+        if (hoverTimeout) {
+          clearTimeout(hoverTimeout);
+        }
+        
+        hoverTimeout = setTimeout(async () => {
+          let minDist = Infinity;
+          let nearestPoint = null;
+          
+          data.forEach(point => {
+            const dist = Math.sqrt((point.x - x) ** 2 + (point.y - y) ** 2);
+            if (dist < minDist) {
+              minDist = dist;
+              nearestPoint = point;
+            }
+          });
+          
+          if (nearestPoint && onHover) {
+            // 가장 가까운 포인트 강조
+            if (hoveredPoint) {
+              // 이전 hover 포인트 스타일 복원
+              points.filter(d => d === hoveredPoint)
+                .attr("r", 3)
+                .attr("opacity", 0.6);
+            }
+            
+            // 새로운 hover 포인트 강조
+            points.filter(d => d === nearestPoint)
+              .attr("r", 6)
+              .attr("opacity", 1.0);
+            
+            hoveredPoint = nearestPoint;
+            
+            // onHover 콜백 호출 (latent z, trajectory, 2D 좌표 전달)
+            onHover(nearestPoint.latent, nearestPoint.trajectory, [nearestPoint.x, nearestPoint.y]);
+          }
+        }, 30);
+      });
+
+      hoverRect.on("mouseleave", () => {
+        if (hoveredPoint) {
+          points.filter(d => d === hoveredPoint)
+            .attr("r", 3)
+            .attr("opacity", 0.6);
+          hoveredPoint = null;
+        }
+      });
+    }
+    
+    // 클릭 이벤트: 빈 공간 클릭 시 해당 위치의 trajectory 생성
+    hoverRect.on("click", async (event) => {
       const [mouseX, mouseY] = d3.pointer(event);
       const x = xScale.invert(mouseX);
       const y = yScale.invert(mouseY);
       
-      if (hoverTimeout) {
-        clearTimeout(hoverTimeout);
-      }
+      // 클릭한 위치에 데이터 포인트가 있는지 확인
+      let minDist = Infinity;
+      let nearestPoint = null;
       
-      hoverTimeout = setTimeout(async () => {
-        let minDist = Infinity;
-        let nearestPoint = null;
-        
-        data.forEach(point => {
-          const dist = Math.sqrt((point.x - x) ** 2 + (point.y - y) ** 2);
-          if (dist < minDist) {
-            minDist = dist;
-            nearestPoint = point;
-          }
-        });
-        
-        if (nearestPoint && onHover) {
-          // 가장 가까운 포인트 강조
-          if (hoveredPoint) {
-            // 이전 hover 포인트 스타일 복원
-            points.filter(d => d === hoveredPoint)
-              .attr("r", 3)
-              .attr("opacity", 0.6);
-          }
-          
-          // 새로운 hover 포인트 강조
-          points.filter(d => d === nearestPoint)
-            .attr("r", 6)
-            .attr("opacity", 1.0);
-          
-          hoveredPoint = nearestPoint;
-          
-          // onHover 콜백 호출 (latent z와 trajectory 전달)
-          onHover(nearestPoint.latent, nearestPoint.trajectory);
+      data.forEach(point => {
+        const dist = Math.sqrt((point.x - x) ** 2 + (point.y - y) ** 2);
+        if (dist < minDist) {
+          minDist = dist;
+          nearestPoint = point;
         }
-      }, 30);
-    });
-
-    hoverRect.on("mouseleave", () => {
-      if (hoveredPoint) {
-        points.filter(d => d === hoveredPoint)
-          .attr("r", 3)
-          .attr("opacity", 0.6);
-        hoveredPoint = null;
+      });
+      
+      // 데이터 포인트와의 거리가 충분히 멀면 (빈 공간 클릭) 생성 요청
+      const clickRadius = Math.min(
+        (xExtent[1] - xExtent[0]) * 0.05,
+        (yExtent[1] - yExtent[0]) * 0.05
+      );
+      
+      if (minDist > clickRadius && onClick) {
+        // 빈 공간 클릭: 서버에 trajectory 생성 요청
+        onClick(x, y);
+      } else if (nearestPoint && onClick) {
+        // 데이터 포인트 클릭: 기존 trajectory 표시
+        onClick(nearestPoint.x, nearestPoint.y, nearestPoint.trajectory, nearestPoint.latent);
       }
     });
 
@@ -181,7 +216,10 @@ class LatentSpacePlot extends Component {
     gy.selectAll("line").attr("stroke", "#e2e8f0");
     gy.select(".domain").attr("stroke", "#e2e8f0");
 
-    // 축 레이블
+    // 축 레이블 (method에 따라 동적으로 변경)
+    const xLabel = method === 'pca' ? 'PC1' : method === 'tsne' ? 't-SNE 1' : 'UMAP 1';
+    const yLabel = method === 'pca' ? 'PC2' : method === 'tsne' ? 't-SNE 2' : 'UMAP 2';
+    
     g.append("text")
       .attr("x", width / 2)
       .attr("y", height + 35)
@@ -189,7 +227,7 @@ class LatentSpacePlot extends Component {
       .style("text-anchor", "middle")
       .style("font-size", "12px")
       .style("font-weight", "500")
-      .text("PC1");
+      .text(xLabel);
 
     g.append("text")
       .attr("transform", "rotate(-90)")
@@ -199,7 +237,7 @@ class LatentSpacePlot extends Component {
       .style("text-anchor", "middle")
       .style("font-size", "12px")
       .style("font-weight", "500")
-      .text("PC2");
+      .text(yLabel);
     
     // Legend 추가 (plot 외부 하단으로 이동)
     const legend = g.append("g")
@@ -284,7 +322,10 @@ LatentSpacePlot.propTypes = {
       label: PropTypes.string
     })
   ).isRequired,
-  onHover: PropTypes.func.isRequired
+  onHover: PropTypes.func,
+  onClick: PropTypes.func,
+  method: PropTypes.string,
+  mode: PropTypes.string
 };
 
 export default LatentSpacePlot;

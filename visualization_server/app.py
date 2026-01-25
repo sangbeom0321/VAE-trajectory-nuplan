@@ -139,6 +139,9 @@ dataset = None
 device = None
 latent_z_cache = {}  # 인덱스 -> latent z 매핑
 trajectory_cache = {}  # 인덱스 -> 원본 trajectory 매핑
+reducer_cache = {}  # method -> reducer 매핑 (PCA, t-SNE, UMAP)
+latent_matrix_cache = {}  # method -> latent_matrix 매핑
+projected_cache = {}  # method -> projected 매핑
 
 
 def load_model(checkpoint_path, config_path):
@@ -320,8 +323,8 @@ def compute_latent_space():
         if method == 'umap' and not UMAP_AVAILABLE:
             return jsonify({'error': 'UMAP is not available. Install with: pip install umap-learn'}), 400
         
-        # 샘플 수를 10,000개로 고정
-        MAX_SAMPLES = 10000
+        # 샘플 수를 5,000개로 고정
+        MAX_SAMPLES = 5000
         
         # trajectory_indices가 없으면 샘플링
         if trajectory_indices is None:
@@ -387,6 +390,11 @@ def compute_latent_space():
             print(f'UMAP projection completed')
         else:
             return jsonify({'error': 'Invalid method. Use "pca", "tsne", or "umap"'}), 400
+        
+        # Reducer와 데이터를 캐시에 저장 (나중에 클릭한 위치에서 역변환하기 위해)
+        reducer_cache[method] = reducer
+        latent_matrix_cache[method] = latent_matrix
+        projected_cache[method] = projected
         
         # Latent z의 실제 분산 확인 (디버깅용 - Posterior Collapse 감지)
         latent_std = np.std(latent_matrix, axis=0)
@@ -466,6 +474,115 @@ def compute_latent_space():
         error_msg = str(e)
         traceback_str = traceback.format_exc()
         print(f'Error in compute_latent_space: {error_msg}')
+        print(traceback_str)
+        return jsonify({
+            'error': f'Server error: {error_msg}',
+            'traceback': traceback_str
+        }), 500
+
+
+@app.route('/api/generate-trajectory-from-point', methods=['POST'])
+def generate_trajectory_from_point():
+    """클릭한 2D 좌표에서 latent z를 복원하고 trajectory 생성"""
+    if model is None or dataset is None:
+        return jsonify({'error': 'Model or dataset not loaded'}), 500
+    
+    try:
+        data = request.json
+        x_2d = data.get('x', None)
+        y_2d = data.get('y', None)
+        method = data.get('method', 'pca')
+        
+        if x_2d is None or y_2d is None:
+            return jsonify({'error': 'x and y coordinates required'}), 400
+        
+        # Reducer와 데이터 가져오기
+        if method not in reducer_cache:
+            return jsonify({'error': f'No cached data for method {method}. Please load latent space first.'}), 400
+        
+        reducer = reducer_cache[method]
+        latent_matrix = latent_matrix_cache[method]
+        projected = projected_cache[method]
+        
+        # 2D 좌표를 latent z로 역변환
+        point_2d = np.array([[x_2d, y_2d]], dtype=np.float32)
+        
+        if method == 'pca':
+            # PCA는 선형 변환이라 역변환이 가능 - 클릭한 위치를 직접 사용
+            latent_z_approx = reducer.inverse_transform(point_2d)[0]  # (latent_dim,)
+            print(f'PCA inverse transform: clicked 2D=[{x_2d:.4f}, {y_2d:.4f}]')
+        else:
+            # t-SNE/UMAP은 비선형 변환이라 역변환이 불가능
+            # 클릭한 위치에서 가장 가까운 점들의 latent z를 거리 기반 가중 평균으로 보간
+            distances = np.sum((projected - point_2d) ** 2, axis=1)
+            
+            # 가장 가까운 k개 점 사용 (더 많은 점을 사용하면 더 부드러운 보간)
+            k = min(15, len(projected))
+            nearest_indices = np.argsort(distances)[:k]
+            nearest_distances = distances[nearest_indices]
+            
+            # 거리 기반 가중치: 가까울수록 높은 가중치 (역수 사용, 제곱으로 더 강하게)
+            # 거리가 0이면 가중치가 매우 높아지도록
+            weights = 1.0 / (nearest_distances ** 2 + 1e-10)
+            weights = weights / np.sum(weights)  # 정규화
+            
+            # 가중 평균으로 latent z 계산 (직접 보간)
+            latent_z_approx = np.sum(latent_matrix[nearest_indices] * weights[:, np.newaxis], axis=0)
+            
+            print(f'Direct interpolation ({method}): clicked 2D=[{x_2d:.4f}, {y_2d:.4f}], using {k} nearest points')
+            print(f'  Nearest point distance: {np.sqrt(nearest_distances[0]):.4f}, weight: {weights[0]:.4f}')
+        
+        # 디코더로 trajectory 생성
+        with torch.no_grad():
+            latent_z_tensor = torch.FloatTensor(latent_z_approx).unsqueeze(0).to(device)  # (1, latent_dim)
+            reconstructed_flat = model.vae_decoder(latent_z_tensor)  # (1, 160) - 정규화된 출력
+            reconstructed = model._unflatten_output(reconstructed_flat)  # (1, 80, 2)
+            trajectory_np = reconstructed[0].cpu().numpy()  # (80, 2) - 정규화된 상태
+        
+        print(f'Generated trajectory (normalized): range x=[{np.min(trajectory_np[:, 0]):.2f}, {np.max(trajectory_np[:, 0]):.2f}], y=[{np.min(trajectory_np[:, 1]):.2f}, {np.max(trajectory_np[:, 1]):.2f}]')
+        
+        # 역정규화 (디코더 출력은 정규화된 상태이므로 역정규화 필요)
+        if dataset.normalize:
+            trajectory_flat = trajectory_np.flatten()  # (160,)
+            trajectory_denorm = dataset._denormalize_trajectory(trajectory_flat)
+            trajectory_np = trajectory_denorm.reshape(80, 2)
+            print(f'Generated trajectory (denormalized): range x=[{np.min(trajectory_np[:, 0]):.2f}, {np.max(trajectory_np[:, 0]):.2f}], y=[{np.min(trajectory_np[:, 1]):.2f}, {np.max(trajectory_np[:, 1]):.2f}]')
+        else:
+            print('Dataset is not normalized, skipping denormalization')
+        
+        # 시작점을 (0, 0)으로 강제 설정 (로컬 좌표계)
+        trajectory_np[0, 0] = 0.0
+        trajectory_np[0, 1] = 0.0
+        
+        # Trajectory 분류
+        label = classify_trajectory(trajectory_np)
+        
+        # 2D 좌표 계산 (projected space에서의 위치)
+        if method in projected_cache:
+            # 가장 가까운 점의 2D 좌표 사용 (또는 직접 계산)
+            if method == 'pca':
+                # PCA는 직접 역변환 가능하므로 2D 좌표를 그대로 사용
+                point_2d = np.array([[x_2d, y_2d]], dtype=np.float32)
+            else:
+                # t-SNE/UMAP은 가장 가까운 점의 2D 좌표 사용
+                point_2d = np.array([[x_2d, y_2d]], dtype=np.float32)
+        else:
+            point_2d = np.array([[x_2d, y_2d]], dtype=np.float32)
+        
+        return jsonify({
+            'trajectory': trajectory_np.tolist(),
+            'latent_z': latent_z_approx.tolist(),
+            'latent_z_2d': [float(x_2d), float(y_2d)],  # 2D 좌표
+            'label': label,
+            'method': method,
+            'is_generated': True  # 생성된 trajectory임을 표시
+        })
+    
+    except Exception as e:
+        import traceback
+        error_msg = str(e)
+        traceback_str = traceback.format_exc()
+        print(f'Error in generate_trajectory_from_point: {error_msg}')
         print(traceback_str)
         return jsonify({
             'error': f'Server error: {error_msg}',

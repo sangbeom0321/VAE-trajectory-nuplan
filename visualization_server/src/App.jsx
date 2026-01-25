@@ -14,14 +14,19 @@ class App extends Component {
       latentSpaceData: null,
       selectedTrajectory: null,  // hover된 trajectory
       selectedLatent: null,  // hover된 latent z
+      selectedLatent2D: null,  // hover된 latent z의 2D 좌표
       trajectoryBounds: null,  // 모든 trajectory의 전체 범위
       loading: false,
       error: null,
-      method: 'tsne'  // 기본값: t-SNE
+      method: 'pca',  // 기본값: PCA (역변환 가능)
+      isGenerated: false,  // 생성된 trajectory인지 여부
+      mode: 'browse'  // 'browse' 또는 'generate'
     };
     
     this.handleLatentHover = this.handleLatentHover.bind(this);
     this.handleMethodChange = this.handleMethodChange.bind(this);
+    this.handleLatentClick = this.handleLatentClick.bind(this);
+    this.handleModeChange = this.handleModeChange.bind(this);
   }
 
   componentDidMount() {
@@ -44,7 +49,7 @@ class App extends Component {
     }
   }
 
-  async loadLatentSpace(method = 'tsne') {
+  async loadLatentSpace(method = 'pca') {
     this.setState({ loading: true, error: null });
     
     try {
@@ -52,8 +57,8 @@ class App extends Component {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          method: method,  // 'tsne' or 'umap'
-          max_samples: 10000  // 샘플 수를 10,000개로 고정
+          method: method,  // 'pca', 'tsne', or 'umap'
+          max_samples: 5000  // 샘플 수를 5,000개로 고정
         })
       });
       
@@ -122,12 +127,99 @@ class App extends Component {
     }
   }
 
-  handleLatentHover(latent, trajectory) {
-    // Latent z에 hover하면 해당 trajectory 표시
+  handleLatentHover(latent, trajectory, coords2D) {
+    // Generate 모드에서는 hover 시 경로를 표시하지 않음
+    if (this.state.mode === 'generate') {
+      return;
+    }
+    
+    // Browse 모드에서만 hover 시 trajectory 표시
     this.setState({
       selectedTrajectory: trajectory,
-      selectedLatent: latent
+      selectedLatent: latent,
+      selectedLatent2D: coords2D || null,
+      isGenerated: false  // hover는 기존 데이터
     });
+  }
+  
+  handleModeChange(mode) {
+    this.setState({ 
+      mode,
+      selectedTrajectory: null,
+      selectedLatent: null,
+      isGenerated: false
+    });
+  }
+  
+  async handleLatentClick(x, y, existingTrajectory, existingLatent) {
+    // Browse 모드: 기존 데이터만 표시
+    if (this.state.mode === 'browse') {
+      if (existingTrajectory && existingLatent) {
+        this.setState({
+          selectedTrajectory: existingTrajectory,
+          selectedLatent: existingLatent,
+          selectedLatent2D: x !== null && y !== null ? [x, y] : null,
+          isGenerated: false
+        });
+      }
+      return;
+    }
+    
+    // Generate 모드: 빈 공간 클릭 시 trajectory 생성
+    if (this.state.mode === 'generate') {
+      // 기존 trajectory가 있으면 그냥 표시 (데이터 포인트 클릭)
+      if (existingTrajectory && existingLatent) {
+        this.setState({
+          selectedTrajectory: existingTrajectory,
+          selectedLatent: existingLatent,
+          selectedLatent2D: x !== null && y !== null ? [x, y] : null,
+          isGenerated: false
+        });
+        return;
+      }
+      
+      // 빈 공간 클릭: 서버에 trajectory 생성 요청
+      if (x === null || y === null) return;
+      
+      this.setState({ loading: true, error: null });
+      
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/generate-trajectory-from-point`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            x: x,
+            y: y,
+            method: this.state.method
+          })
+        });
+        
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({ error: `HTTP ${response.status}: ${response.statusText}` }));
+          throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        
+        if (data.error) {
+          throw new Error(data.error);
+        }
+        
+        this.setState({
+          selectedTrajectory: data.trajectory,
+          selectedLatent: data.latent_z,
+          selectedLatent2D: data.latent_z_2d || null,
+          isGenerated: true,
+          loading: false
+        });
+      } catch (error) {
+        console.error('Error generating trajectory:', error);
+        this.setState({
+          error: `Failed to generate trajectory: ${error.message}`,
+          loading: false
+        });
+      }
+    }
   }
 
   render() {
@@ -158,22 +250,48 @@ class App extends Component {
                 <span>Latent Dim: {datasetInfo.latent_dim}</span>
               </div>
             )}
-            <div className="method-selector">
-              <label>Method: </label>
-              <button 
-                className={this.state.method === 'tsne' ? 'active' : ''}
-                onClick={() => this.handleMethodChange('tsne')}
-                disabled={this.state.loading}
-              >
-                t-SNE
-              </button>
-              <button 
-                className={this.state.method === 'umap' ? 'active' : ''}
-                onClick={() => this.handleMethodChange('umap')}
-                disabled={this.state.loading}
-              >
-                UMAP
-              </button>
+            <div className="controls-group">
+              <div className="method-selector">
+                <label>Method: </label>
+                <button 
+                  className={this.state.method === 'pca' ? 'active' : ''}
+                  onClick={() => this.handleMethodChange('pca')}
+                  disabled={this.state.loading}
+                >
+                  PCA
+                </button>
+                <button 
+                  className={this.state.method === 'tsne' ? 'active' : ''}
+                  onClick={() => this.handleMethodChange('tsne')}
+                  disabled={this.state.loading}
+                >
+                  t-SNE
+                </button>
+                <button 
+                  className={this.state.method === 'umap' ? 'active' : ''}
+                  onClick={() => this.handleMethodChange('umap')}
+                  disabled={this.state.loading}
+                >
+                  UMAP
+                </button>
+              </div>
+              <div className="mode-selector">
+                <label>Mode: </label>
+                <button 
+                  className={this.state.mode === 'browse' ? 'active' : ''}
+                  onClick={() => this.handleModeChange('browse')}
+                  disabled={this.state.loading}
+                >
+                  Browse
+                </button>
+                <button 
+                  className={this.state.mode === 'generate' ? 'active' : ''}
+                  onClick={() => this.handleModeChange('generate')}
+                  disabled={this.state.loading}
+                >
+                  Generate
+                </button>
+              </div>
             </div>
           </div>
         </header>
@@ -207,7 +325,25 @@ class App extends Component {
                 <section className="card">
                   <h2 className="card-title">Latent Space (2D Projection)</h2>
                   <p className="card-description">
-                    마우스를 움직여 latent z에 hover하면 해당 trajectory가 오른쪽에 표시됩니다.
+                    {this.state.mode === 'browse' ? (
+                      '마우스를 움직여 latent z에 hover하면 해당 trajectory가 오른쪽에 표시됩니다.'
+                    ) : (
+                      <>
+                        <span style={{color: '#10b981', fontWeight: 'bold'}}>
+                          Generate 모드: 빈 공간을 클릭하면 해당 위치의 latent z에서 새로운 경로를 생성합니다.
+                        </span>
+                        <br />
+                        <span style={{color: this.state.method === 'pca' ? '#10b981' : '#f59e0b', fontSize: '0.85em'}}>
+                          {this.state.method === 'pca' 
+                            ? '✓ PCA는 정확한 역변환이 가능합니다.' 
+                            : '⚠️ t-SNE/UMAP은 비선형이라 근사치만 가능합니다. 정확한 역변환을 원하면 PCA를 사용하세요.'}
+                        </span>
+                        <br />
+                        <span style={{color: '#64748b', fontSize: '0.85em'}}>
+                          데이터 포인트를 클릭하면 기존 trajectory가 표시됩니다.
+                        </span>
+                      </>
+                    )}
                     {latentSpaceData && (
                       <>
                         <span style={{marginLeft: '10px', color: '#64748b', fontSize: '0.85em'}}>
@@ -232,7 +368,10 @@ class App extends Component {
                   {latentSpaceData && (
                     <LatentSpacePlot
                       data={latentSpaceData.projected_points}
-                      onHover={this.handleLatentHover}
+                      onHover={this.state.mode === 'browse' ? this.handleLatentHover : null}
+                      onClick={this.handleLatentClick}
+                      method={latentSpaceData.method}
+                      mode={this.state.mode}
                     />
                   )}
                 </section>
@@ -242,8 +381,50 @@ class App extends Component {
                   {selectedTrajectory ? (
                     <>
                       <p className="card-description">
-                        Hover된 latent z에 매칭되는 원본 입력 경로입니다.
+                        {this.state.isGenerated ? (
+                          <span style={{color: '#10b981', fontWeight: 'bold'}}>
+                            ✨ 생성된 경로 (클릭한 위치의 latent z에서 디코딩)
+                          </span>
+                        ) : (
+                          'Hover된 latent z에 매칭되는 원본 입력 경로입니다.'
+                        )}
                       </p>
+                      {(this.state.isGenerated || this.state.selectedLatent2D) && this.state.selectedLatent && (
+                        <div className="latent-info" style={{
+                          marginBottom: '16px',
+                          padding: '12px',
+                          backgroundColor: '#f8f9fa',
+                          borderRadius: '8px',
+                          fontSize: '0.85rem'
+                        }}>
+                          <div style={{marginBottom: '8px'}}>
+                            <strong style={{color: '#6366f1'}}>2D 좌표 ({this.state.latentSpaceData?.method?.toUpperCase() || this.state.method.toUpperCase()}):</strong>
+                            {this.state.selectedLatent2D ? (
+                              <span style={{marginLeft: '8px', fontFamily: 'monospace'}}>
+                                [{this.state.selectedLatent2D[0].toFixed(4)}, {this.state.selectedLatent2D[1].toFixed(4)}]
+                              </span>
+                            ) : (
+                              <span style={{marginLeft: '8px', color: '#64748b'}}>N/A</span>
+                            )}
+                          </div>
+                          <div>
+                            <strong style={{color: '#6366f1'}}>32차원 Latent z:</strong>
+                            <div style={{
+                              marginTop: '4px',
+                              padding: '8px',
+                              backgroundColor: 'white',
+                              borderRadius: '4px',
+                              maxHeight: '120px',
+                              overflowY: 'auto',
+                              fontFamily: 'monospace',
+                              fontSize: '0.75rem',
+                              wordBreak: 'break-all'
+                            }}>
+                              [{this.state.selectedLatent.map(v => v.toFixed(4)).join(', ')}]
+                            </div>
+                          </div>
+                        </div>
+                      )}
                       <TrajectoryCanvas
                         trajectory={selectedTrajectory}
                         bounds={trajectoryBounds}
