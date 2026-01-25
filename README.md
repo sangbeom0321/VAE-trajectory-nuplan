@@ -1,61 +1,61 @@
 # VAE-Planner
 
-VAE(Variational Autoencoder) 기반 자율주행 차량 궤적 예측 모델
+VAE (Variational Autoencoder) based trajectory prediction model for autonomous vehicles
 
-## 📋 프로젝트 개요
+## 📋 Project Overview
 
-VAE-Planner는 VAE를 활용하여 자율주행 차량의 미래 궤적을 예측하는 딥러닝 모델입니다. nuPlan 데이터셋의 8초 궤적 데이터를 학습하여 다양한 주행 시나리오에 대한 다중 궤적을 생성할 수 있습니다.
+VAE-Planner is a deep learning model that predicts future trajectories of autonomous vehicles using Variational Autoencoders. It is trained on 8-second trajectory data from the nuPlan dataset and can generate multiple trajectories for various driving scenarios.
 
-### 주요 특징
+### Key Features
 
-- **VAE 기반 불확실성 모델링**: Latent variable 샘플링을 통한 multi-modal 궤적 예측
-- **β-VAE Annealing**: KL divergence weight를 점진적으로 증가시켜 posterior collapse 방지
-- **Interactive Visualization**: 웹 기반 시각화 서버를 통한 latent space 탐색 및 궤적 시각화
-- **nuPlan 데이터셋 지원**: 대규모 자율주행 데이터셋 활용
+- **VAE-based Uncertainty Modeling**: Multi-modal trajectory prediction through latent variable sampling
+- **β-VAE Annealing**: Gradually increases KL divergence weight to prevent posterior collapse
+- **Interactive Visualization**: Explore latent space and visualize trajectories through a web-based visualization server
+- **nuPlan Dataset Support**: Utilizes large-scale autonomous driving dataset
 
-## 🏗️ 모델 아키텍처
+## 🏗️ Model Architecture
 
 ![Model Architecture](assets/model_architecture.png)
 
-VAE-Planner는 다음과 같은 구조로 구성됩니다:
+VAE-Planner consists of the following structure:
 
-1. **Encoder**: 160차원 궤적 벡터(80 타임스텝 × 2차원)를 32차원 latent space로 인코딩
-   - 구조: 160 → 512 → 256 → 128 → 32 (μ, logvar)
+1. **Encoder**: Encodes 160-dimensional trajectory vectors (80 timesteps × 2 dimensions) into 32-dimensional latent space
+   - Architecture: 160 → 512 → 256 → 128 → 32 (μ, logvar)
    
-2. **Reparameterization Trick**: μ와 logvar로부터 latent variable z 샘플링
+2. **Reparameterization Trick**: Samples latent variable z from μ and logvar
    - z = μ + σ × ε, where ε ~ N(0, I)
 
-3. **Decoder**: 32차원 latent z를 160차원 궤적 벡터로 복원
-   - 구조: 32 → 128 → 256 → 512 → 160
+3. **Decoder**: Reconstructs 160-dimensional trajectory vectors from 32-dimensional latent z
+   - Architecture: 32 → 128 → 256 → 512 → 160
 
-### 학습 결과 예시
+### Training Results Example
 
 ![VAE Results](assets/VAE_results_1.gif)
 
-## 📦 설치
+## 📦 Installation
 
-### 필수 요구사항
+### Requirements
 
-- Python 3.9 이상
-- CUDA 지원 GPU (권장)
-- Node.js 14 이상 (시각화 서버용)
+- Python 3.9 or higher
+- CUDA-enabled GPU (recommended)
+- Node.js 14 or higher (for visualization server)
 
-### Python 패키지 설치
+### Python Package Installation
 
 ```bash
-# 프로젝트 루트에서
+# From project root
 pip install -r requirements.txt
 ```
 
-또는 개별 설치:
+Or install individually:
 
 ```bash
 pip install torch torchvision torchaudio
 pip install numpy scikit-learn pyyaml tqdm matplotlib
-pip install wandb tensorboard  # 선택사항: 학습 로깅용
+pip install wandb tensorboard  # Optional: for training logging
 ```
 
-### 시각화 서버 의존성 설치
+### Visualization Server Dependencies
 
 ```bash
 cd visualization_server
@@ -63,22 +63,22 @@ pip install -r requirements.txt
 npm install
 ```
 
-## 📊 데이터 준비
+## 📊 Data Preparation
 
-### nuPlan 데이터셋에서 궤적 추출
+### Extracting Trajectories from nuPlan Dataset
 
-1. nuPlan 데이터셋을 다운로드하고 경로를 설정합니다.
+1. Download the nuPlan dataset and set up the paths.
 
-2. `data_process/extract_8s_trajectories.sh` 파일을 수정하여 데이터 경로를 설정합니다:
+2. Modify `data_process/extract_8s_trajectories.sh` to configure data paths:
 
 ```bash
 NUPLAN_DATA_PATH="$HOME/99_dataset/01_nuplan/dataset/nuplan-v1.1/splits/trainval"
 NUPLAN_MAP_PATH="$HOME/99_dataset/01_nuplan/dataset/maps"
 TRAJECTORY_SAVE_PATH="$HOME/99_dataset/01_nuplan/dataset/exp2/trajectories_8s.npz"
-NUM_SAMPLES=100000  # 추출할 샘플 수
+NUM_SAMPLES=100000  # Number of samples to extract
 ```
 
-3. 궤적 추출 스크립트 실행:
+3. Run the trajectory extraction script:
 
 ```bash
 cd data_process
@@ -86,31 +86,31 @@ chmod +x extract_8s_trajectories.sh
 ./extract_8s_trajectories.sh
 ```
 
-추출된 데이터는 `.npz` 형식으로 저장되며, 각 샘플은 160차원 벡터(80 타임스텝 × 2차원 [x, y])로 구성됩니다.
+The extracted data is saved in `.npz` format, where each sample is a 160-dimensional vector (80 timesteps × 2 dimensions [x, y]).
 
-## 🚀 사용 방법
+## 🚀 Usage
 
-### 1. 설정 파일 수정
+### 1. Configure Settings
 
-`train/config.yaml` 파일을 열어 데이터 경로와 학습 설정을 수정합니다:
+Open `train/config.yaml` and modify data paths and training settings:
 
 ```yaml
 data:
   trajectory_data_path: "$HOME/99_dataset/01_nuplan/dataset/exp2/trajectories_8s.npz"
-  normalize: true  # 데이터 정규화 여부
-  max_samples: 100000  # 사용할 최대 샘플 수
+  normalize: true  # Whether to normalize data
+  max_samples: 100000  # Maximum number of samples to use
 
 model:
-  future_horizon: 80  # 미래 프레임 수 (8초 × 10Hz)
+  future_horizon: 80  # Number of future frames (8 seconds × 10Hz)
   future_dim: 2  # [x, y]
-  latent_dim: 32  # Latent space 차원
-  kl_weight: 0.5  # KL divergence 가중치
+  latent_dim: 32  # Latent space dimension
+  kl_weight: 0.5  # KL divergence weight
   kl_annealing:
-    enabled: true  # Annealing 사용 여부
-    start_weight: 0.01  # 시작 KL weight
-    end_weight: 0.5  # 최종 KL weight
-    annealing_type: "linear"  # "linear" 또는 "cosine"
-    warmup_epochs: 2  # Warmup 에포크 수
+    enabled: true  # Whether to use annealing
+    start_weight: 0.01  # Initial KL weight
+    end_weight: 0.5  # Final KL weight
+    annealing_type: "linear"  # "linear" or "cosine"
+    warmup_epochs: 2  # Number of warmup epochs
 
 training:
   batch_size: 32
@@ -120,177 +120,181 @@ training:
   gradient_clip: 1.0
 ```
 
-### 2. 학습 실행
+### 2. Training
 
 ```bash
 cd train
 python train.py --config config.yaml --name vae-planner-training
 ```
 
-#### 주요 옵션
+#### Key Options
 
-- `--config`: 설정 파일 경로 (기본값: `config.yaml`)
-- `--resume`: 체크포인트 경로 (학습 재개용)
-- `--name`: 실험 이름 (기본값: `vae-planner-training`)
-- `--num_workers`: 데이터 로딩 워커 수 (기본값: 8)
-- `--use_wandb`: Wandb 로깅 사용 여부 (기본값: True)
+- `--config`: Configuration file path (default: `config.yaml`)
+- `--resume`: Checkpoint path (for resuming training)
+- `--name`: Experiment name (default: `vae-planner-training`)
+- `--num_workers`: Number of data loading workers (default: 8)
+- `--use_wandb`: Whether to use Wandb logging (default: True)
 
-#### Wandb 설정 (선택사항)
+#### Wandb Setup (Optional)
 
-학습 로깅을 위해 Wandb를 사용하려면 API 키를 설정해야 합니다:
+To use Wandb for training logging, you need to set up your API key:
 
 ```bash
-# 방법 1: 명령어로 로그인 (권장)
+# Method 1: Login via command (recommended)
 wandb login
 
-# 방법 2: 환경 변수로 설정
+# Method 2: Set environment variable
 export WANDB_API_KEY=your_api_key_here
 ```
 
-API 키는 [https://wandb.ai/settings](https://wandb.ai/settings)에서 확인할 수 있습니다.
+You can find your API key at [https://wandb.ai/settings](https://wandb.ai/settings).
 
-### 3. 학습 결과 확인
+### 3. View Training Results
 
-학습 결과는 `train/train_output/<실험명>/<타임스탬프>/` 디렉토리에 저장됩니다:
+Training results are saved in `train/train_output/<experiment_name>/<timestamp>/` directory:
 
-- `checkpoints/`: 모델 체크포인트 파일 (`.pth`)
-- `logs/`: TensorBoard 로그 파일
-- `latent_analysis/`: Latent space 분석 결과 (PCA 시각화 포함)
-- `original_trajectories.npz`: 학습에 사용된 원본 궤적 데이터
+- `checkpoints/`: Model checkpoint files (`.pth`)
+- `logs/`: TensorBoard log files
+- `latent_analysis/`: Latent space analysis results (includes PCA visualization)
+- `original_trajectories.npz`: Original trajectory data used for training
 
-TensorBoard로 학습 과정 확인:
+View training progress with TensorBoard:
 
 ```bash
 tensorboard --logdir train/train_output
 ```
 
-## 🎨 시각화 서버
+## 🎨 Visualization Server
 
-학습된 모델의 latent space를 브라우저에서 탐색하고 궤적을 시각화할 수 있는 웹 애플리케이션입니다.
+A web application that allows you to explore the latent space of trained models and visualize trajectories in your browser.
 
-### 빌드 및 실행
+### Build and Run
 
-1. **클라이언트 빌드** (최초 1회 또는 클라이언트 코드 변경 시):
+1. **Build Client** (first time or when client code changes):
 
 ```bash
 cd visualization_server
 ./build_client.sh
 ```
 
-2. **서버 시작**:
+2. **Start Server**:
 
 ```bash
 ./start_server.sh
 ```
 
-또는
+Or:
 
 ```bash
 python app.py --config ../train/config.yaml --port 5000
 ```
 
-3. **브라우저에서 접속**:
+3. **Access in Browser**:
 
 ```
 http://localhost:5000
 ```
 
-서버가 자동으로:
-- `train/train_output`에서 최신 체크포인트를 찾아 사용
-- Config 파일에서 데이터셋 경로를 읽어 로드
-- 통합된 React 클라이언트 서빙
+The server automatically:
+- Finds and uses the latest checkpoint from `train/train_output`
+- Loads dataset path from config file
+- Serves the integrated React client
 
-### 수동 체크포인트 지정
+### Manual Checkpoint Specification
 
 ```bash
-python app.py --checkpoint <체크포인트_경로> --config ../train/config.yaml --port 5000
+python app.py --checkpoint <checkpoint_path> --config ../train/config.yaml --port 5000
 ```
 
-### 주요 기능
+### Key Features
 
-- **Latent Space 시각화**: 데이터셋의 궤적들이 latent space에 2D로 projection되어 표시 (PCA 또는 t-SNE)
-- **Interactive Hover**: Latent space에서 마우스를 움직이면 가장 가까운 latent z가 강조되고, 해당 z에 매칭되는 원본 입력 궤적이 표시됩니다
-- **Trajectory 시각화**: 원본 궤적이 시작점(녹색), 끝점(빨강), 경로(빨간 선)로 시각화됩니다
+- **Latent Space Visualization**: Trajectories from the dataset are projected to 2D in latent space (PCA or t-SNE)
+- **Interactive Hover**: Moving the mouse in latent space highlights the nearest latent z and displays the corresponding original input trajectory
+- **Trajectory Visualization**: Original trajectories are visualized with start point (green), end point (red), and path (red line)
 
-자세한 내용은 [visualization_server/README.md](visualization_server/README.md)를 참고하세요.
+For more details, see [visualization_server/README.md](visualization_server/README.md).
 
-## 📁 프로젝트 구조
+## 📁 Project Structure
 
 ```
 VAE-Planner/
-├── data/                          # 데이터 로더
+├── data/                          # Data loaders
 │   ├── __init__.py
-│   └── trajectory_dataset.py      # 궤적 데이터셋 클래스
-├── data_process/                  # 데이터 전처리
+│   └── trajectory_dataset.py      # Trajectory dataset class
+├── data_process/                  # Data preprocessing
 │   ├── extract_8s_trajectories.py
 │   └── extract_8s_trajectories.sh
-├── models/                        # 모델 정의
+├── models/                        # Model definitions
 │   ├── __init__.py
-│   ├── vae.py                    # VAE 모듈 (Encoder, Decoder)
-│   └── trajectory_predictor.py   # 전체 모델 통합
-├── train/                         # 학습 스크립트
-│   ├── config.yaml               # 학습 설정 파일
-│   ├── train.py                  # 학습 스크립트
-│   └── train_output/             # 학습 결과 저장 디렉토리
-│       └── <실험명>/
-│           └── <타임스탬프>/
-│               ├── checkpoints/  # 모델 체크포인트
-│               ├── logs/         # TensorBoard 로그
-│               └── latent_analysis/  # Latent space 분석 결과
-├── utils/                         # 유틸리티 함수
-│   ├── loss.py                   # Loss 함수 (MSE, KL Divergence)
-│   └── metrics.py                # 평가 지표
-├── visualization_server/          # 시각화 웹 서버
-│   ├── app.py                    # Flask 백엔드 API 서버
-│   ├── src/                      # React 프론트엔드
+│   ├── vae.py                    # VAE module (Encoder, Decoder)
+│   └── trajectory_predictor.py   # Integrated model
+├── train/                         # Training scripts
+│   ├── config.yaml               # Training configuration file
+│   ├── train.py                  # Training script
+│   └── train_output/             # Training results directory
+│       └── <experiment_name>/
+│           └── <timestamp>/
+│               ├── checkpoints/  # Model checkpoints
+│               ├── logs/         # TensorBoard logs
+│               └── latent_analysis/  # Latent space analysis results
+├── utils/                         # Utility functions
+│   ├── loss.py                   # Loss functions (MSE, KL Divergence)
+│   └── metrics.py                # Evaluation metrics
+├── visualization_server/          # Visualization web server
+│   ├── app.py                    # Flask backend API server
+│   ├── src/                      # React frontend
 │   │   ├── App.jsx
 │   │   └── components/
 │   │       ├── LatentSpacePlot.jsx
 │   │       └── TrajectoryCanvas.jsx
-│   ├── requirements.txt          # Python 의존성
-│   ├── package.json              # Node.js 의존성
-│   ├── build_client.sh           # 클라이언트 빌드 스크립트
-│   └── start_server.sh           # 서버 시작 스크립트
-├── trajectory_visualizations/     # 궤적 시각화 결과
-└── README.md                      # 이 파일
+│   ├── requirements.txt          # Python dependencies
+│   ├── package.json              # Node.js dependencies
+│   ├── build_client.sh           # Client build script
+│   └── start_server.sh           # Server start script
+├── trajectory_visualizations/     # Trajectory visualization results
+├── assets/                       # Assets (images, gifs)
+│   ├── model_architecture.png
+│   └── VAE_results_1.gif
+├── requirements.txt              # Main Python dependencies
+└── README.md                     # This file
 ```
 
-## 🔧 주요 기능 설명
+## 🔧 Key Features Explained
 
 ### β-VAE Annealing
 
-학습 초기에 reconstruction에 집중하고, 점진적으로 KL divergence를 증가시켜 posterior collapse를 방지합니다:
+Focuses on reconstruction early in training and gradually increases KL divergence to prevent posterior collapse:
 
-- **Warmup 단계**: 처음 N 에포크 동안 낮은 KL weight 유지
-- **Annealing 단계**: KL weight를 선형 또는 코사인 방식으로 증가
-- 설정: `config.yaml`의 `model.kl_annealing` 섹션
+- **Warmup Phase**: Maintains low KL weight for the first N epochs
+- **Annealing Phase**: Increases KL weight linearly or using cosine schedule
+- Configuration: `model.kl_annealing` section in `config.yaml`
 
-### 데이터 정규화
+### Data Normalization
 
-데이터셋의 평균과 표준편차를 계산하여 궤적 데이터를 정규화합니다:
+Normalizes trajectory data by computing mean and standard deviation of the dataset:
 
-- 정규화 파라미터는 자동으로 계산되거나 `trajectory_norm_params_path`에서 로드됩니다
-- 정규화된 데이터는 `_normalized.npz` 형식으로 저장할 수 있습니다
+- Normalization parameters are automatically computed or loaded from `trajectory_norm_params_path`
+- Normalized data can be saved in `_normalized.npz` format
 
-### Latent Space 분석
+### Latent Space Analysis
 
-학습 완료 후 자동으로 latent space 분석을 수행합니다:
+Automatically performs latent space analysis after training:
 
-- 궤적을 stop, left turn, right turn, straight로 분류
-- PCA를 사용하여 latent space를 2D로 projection
-- 분류별 궤적 샘플 시각화
+- Classifies trajectories into stop, left turn, right turn, and straight
+- Projects latent space to 2D using PCA
+- Visualizes trajectory samples by category
 
-## 📝 참고사항
+## 📝 Notes
 
-- 학습에 사용된 원본 궤적은 `train_output/<실험명>/<타임스탬프>/original_trajectories.npz`에 저장됩니다
-- 모든 궤적의 시작점은 (0, 0)으로 정규화됩니다 (로컬 좌표계)
-- GPU 메모리가 부족한 경우 `batch_size`를 줄이거나 `num_workers`를 조정하세요
+- Original trajectories used for training are saved in `train_output/<experiment_name>/<timestamp>/original_trajectories.npz`
+- All trajectories are normalized to start at (0, 0) (local coordinate system)
+- If GPU memory is insufficient, reduce `batch_size` or adjust `num_workers`
 
-## 📄 라이선스
+## 📄 License
 
-이 프로젝트는 연구 및 교육 목적으로 제공됩니다.
+This project is provided for research and educational purposes.
 
-## 🙏 감사의 말
+## 🙏 Acknowledgments
 
-- nuPlan 데이터셋: [nuPlan-devkit](https://github.com/motional/nuplan-devkit)
-- 시각화 서버는 CVAE-Planner의 visualization_server를 참고하여 제작되었습니다
+- nuPlan Dataset: [nuPlan-devkit](https://github.com/motional/nuplan-devkit)
+- Visualization server was created with reference to CVAE-Planner's visualization_server
