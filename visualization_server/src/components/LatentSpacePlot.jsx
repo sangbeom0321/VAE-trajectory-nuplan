@@ -23,13 +23,23 @@ class LatentSpacePlot extends Component {
     if (!data || data.length === 0 || !this.nodeRef.current) return;
 
     const width = 800;
-    const height = 700;  // 높이 증가: 600 → 700
-    const margin = { top: 20, bottom: 150, left: 50, right: 20 };  // 하단 여백 더 증가
-
+    const height = 700;  // 플롯 영역 높이
+    
     let svg = d3.select(this.nodeRef.current);
     svg.selectAll("*").remove();
 
-    svg.attr("viewBox", `0 0 ${width + margin.left + margin.right} ${height + margin.top + margin.bottom}`)
+    // 실제 데이터에서 사용된 라벨 개수를 먼저 계산하여 legend 높이 추정
+    const usedLabelsCount = [...new Set(data.map(d => d.label))].length;
+    const estimatedItemsPerColumn = Math.ceil(usedLabelsCount / 2);
+    const estimatedLegendHeight = estimatedItemsPerColumn * 20 + 25;  // legend 높이
+    const dynamicBottomMargin = Math.max(150, estimatedLegendHeight + 80);  // legend 높이 + 여유 공간
+    
+    const margin = { top: 20, bottom: dynamicBottomMargin, left: 50, right: 20 };
+    
+    // SVG 높이를 legend를 포함하도록 동적으로 계산
+    const totalHeight = height + margin.top + margin.bottom;
+    
+    svg.attr("viewBox", `0 0 ${width + margin.left + margin.right} ${totalHeight}`)
        .attr("preserveAspectRatio", "xMidYMid meet");
 
     const g = svg.append("g")
@@ -239,10 +249,6 @@ class LatentSpacePlot extends Component {
       .style("font-weight", "500")
       .text(yLabel);
     
-    // Legend 추가 (plot 외부 하단으로 이동)
-    const legend = g.append("g")
-      .attr("transform", `translate(${width / 2 - 200}, ${height + 50})`);
-    
     // 실제 데이터에서 사용된 라벨만 legend에 표시
     const usedLabels = [...new Set(data.map(d => d.label))].sort();
     const legendItems = usedLabels.map(label => ({
@@ -255,6 +261,12 @@ class LatentSpacePlot extends Component {
     const legendWidth = 200;
     const itemHeight = 20;
     const legendHeight = itemsPerColumn * itemHeight + 25;
+    
+    // Legend 추가 (plot 외부 하단으로 이동)
+    // legendHeight를 고려하여 위치 조정
+    const legendY = height + 50;
+    const legend = g.append("g")
+      .attr("transform", `translate(${width / 2 - 200}, ${legendY})`);
     
     // Legend 배경
     legend.append("rect")

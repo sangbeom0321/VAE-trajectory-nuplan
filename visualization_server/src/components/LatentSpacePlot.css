@@ -8,10 +8,11 @@
 .latent-space-plot svg {
   width: 100%;
   height: auto;
-  min-height: 700px;  /* 최소 높이 설정 */
-  max-height: 900px;  /* 최대 높이 증가 */
+  min-height: 850px;  /* 최소 높이 증가 (legend 포함) */
+  max-height: 1200px;  /* 최대 높이 증가 (legend 포함) */
   border-radius: 8px;
   background-color: #fff;
+  overflow: visible;  /* legend가 잘리지 않도록 */
 }
 
 .latent-space-plot .point {

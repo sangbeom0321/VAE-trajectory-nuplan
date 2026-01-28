@@ -20,18 +20,86 @@ class App extends Component {
       error: null,
       method: 'pca',  // 기본값: PCA (역변환 가능)
       isGenerated: false,  // 생성된 trajectory인지 여부
-      mode: 'browse'  // 'browse' 또는 'generate'
+      mode: 'browse',  // 'browse' 또는 'generate'
+      checkpoints: [],  // 사용 가능한 체크포인트 목록
+      currentCheckpoint: null,  // 현재 로드된 체크포인트
+      loadingCheckpoint: false  // 체크포인트 로딩 중 여부
     };
     
     this.handleLatentHover = this.handleLatentHover.bind(this);
     this.handleMethodChange = this.handleMethodChange.bind(this);
     this.handleLatentClick = this.handleLatentClick.bind(this);
     this.handleModeChange = this.handleModeChange.bind(this);
+    this.handleCheckpointChange = this.handleCheckpointChange.bind(this);
   }
 
   componentDidMount() {
+    this.loadCheckpoints();
     this.loadDatasetInfo();
     this.loadLatentSpace(this.state.method);
+  }
+  
+  async loadCheckpoints() {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/checkpoints`);
+      const data = await response.json();
+      if (data.error) {
+        console.error('Failed to load checkpoints:', data.error);
+        return;
+      }
+      this.setState({ 
+        checkpoints: data.checkpoints || [],
+        currentCheckpoint: data.current || null
+      });
+    } catch (error) {
+      console.error('Error loading checkpoints:', error);
+    }
+  }
+  
+  async handleCheckpointChange(checkpointPath) {
+    if (this.state.loadingCheckpoint) return;
+    
+    this.setState({ loadingCheckpoint: true, error: null });
+    
+    try {
+      // 체크포인트 로드
+      const response = await fetch(`${API_BASE_URL}/api/load-checkpoint`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          checkpoint_path: checkpointPath
+        })
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+        throw new Error(errorData.error || `HTTP ${response.status}`);
+      }
+      
+      const data = await response.json();
+      if (data.error) {
+        throw new Error(data.error);
+      }
+      
+      // 체크포인트 목록 및 현재 체크포인트 업데이트
+      await this.loadCheckpoints();
+      
+      // Latent space 재계산
+      this.setState({ 
+        latentSpaceData: null,
+        selectedTrajectory: null,
+        selectedLatent: null
+      });
+      await this.loadLatentSpace(this.state.method);
+      
+      this.setState({ loadingCheckpoint: false });
+    } catch (error) {
+      console.error('Error loading checkpoint:', error);
+      this.setState({
+        error: `Failed to load checkpoint: ${error.message}`,
+        loadingCheckpoint: false
+      });
+    }
   }
   
   handleMethodChange(method) {
@@ -251,26 +319,58 @@ class App extends Component {
               </div>
             )}
             <div className="controls-group">
+              <div className="checkpoint-selector">
+                <label>Checkpoint: </label>
+                <select 
+                  value={this.state.currentCheckpoint || ''}
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      this.handleCheckpointChange(e.target.value);
+                    }
+                  }}
+                  disabled={this.state.loading || this.state.loadingCheckpoint}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: '4px',
+                    border: '1px solid #ddd',
+                    backgroundColor: 'white',
+                    fontSize: '0.9rem',
+                    minWidth: '150px'
+                  }}
+                >
+                  <option value="">Select checkpoint...</option>
+                  {this.state.checkpoints.map((cp, idx) => (
+                    <option key={idx} value={cp.path}>
+                      {cp.display_name}
+                    </option>
+                  ))}
+                </select>
+                {this.state.loadingCheckpoint && (
+                  <span style={{ marginLeft: '8px', fontSize: '0.85rem', color: '#64748b' }}>
+                    Loading...
+                  </span>
+                )}
+              </div>
               <div className="method-selector">
                 <label>Method: </label>
                 <button 
                   className={this.state.method === 'pca' ? 'active' : ''}
                   onClick={() => this.handleMethodChange('pca')}
-                  disabled={this.state.loading}
+                  disabled={this.state.loading || this.state.loadingCheckpoint}
                 >
                   PCA
                 </button>
                 <button 
                   className={this.state.method === 'tsne' ? 'active' : ''}
                   onClick={() => this.handleMethodChange('tsne')}
-                  disabled={this.state.loading}
+                  disabled={this.state.loading || this.state.loadingCheckpoint}
                 >
                   t-SNE
                 </button>
                 <button 
                   className={this.state.method === 'umap' ? 'active' : ''}
                   onClick={() => this.handleMethodChange('umap')}
-                  disabled={this.state.loading}
+                  disabled={this.state.loading || this.state.loadingCheckpoint}
                 >
                   UMAP
                 </button>
@@ -280,14 +380,14 @@ class App extends Component {
                 <button 
                   className={this.state.mode === 'browse' ? 'active' : ''}
                   onClick={() => this.handleModeChange('browse')}
-                  disabled={this.state.loading}
+                  disabled={this.state.loading || this.state.loadingCheckpoint}
                 >
                   Browse
                 </button>
                 <button 
                   className={this.state.mode === 'generate' ? 'active' : ''}
                   onClick={() => this.handleModeChange('generate')}
-                  disabled={this.state.loading}
+                  disabled={this.state.loading || this.state.loadingCheckpoint}
                 >
                   Generate
                 </button>

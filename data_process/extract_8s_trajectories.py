@@ -11,7 +11,7 @@ import os
 import json
 import argparse
 from tqdm import tqdm
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 import signal
 import atexit
 import time
@@ -67,7 +67,7 @@ class TrajectoryExtractor:
         self.sequence_length = sequence_length
         self.num_samples = int(sampling_rate * sequence_length)  # 80개
         
-    def extract_trajectory(self, scenario) -> np.ndarray:
+    def extract_trajectory(self, scenario) -> Optional[np.ndarray]:
         """
         시나리오에서 8초 경로 추출 및 로컬 좌표계 변환
         data_process.py의 get_ego_future_array_from_scenario와 동일한 방식 사용
@@ -77,16 +77,23 @@ class TrajectoryExtractor:
             
         Returns:
             trajectory: (160,) - [x_0, y_0, x_1, y_1, ..., x_79, y_79]
+            None: 시나리오가 8초 미만인 경우
         """
         # 현재 ego state
         current_ego_state = scenario.initial_ego_state
         
         # 8초 미래 경로 추출
-        future_trajectory_absolute_states = scenario.get_ego_future_trajectory(
-            iteration=0,
-            num_samples=self.num_samples,
-            time_horizon=self.sequence_length
-        )
+        try:
+            future_trajectory_absolute_states = scenario.get_ego_future_trajectory(
+                iteration=0,
+                num_samples=self.num_samples,
+                time_horizon=self.sequence_length
+            )
+            # Generator를 리스트로 변환
+            future_trajectory_absolute_states = list(future_trajectory_absolute_states)
+        except Exception:
+            # 미래 경로를 가져올 수 없는 경우
+            return None
         
         # 절대 좌표에서 상대 좌표로 변환 (로컬 좌표계)
         # data_process.py의 get_ego_future_array_from_scenario와 동일한 방식
@@ -98,10 +105,8 @@ class TrajectoryExtractor:
         # (num_samples, 2) 형태: [x, y]
         # 길이 확인 및 조정
         if len(future_trajectory_relative_poses) < self.num_samples:
-            # 부족한 경우 마지막 포인트로 패딩
-            last_point = future_trajectory_relative_poses[-1] if len(future_trajectory_relative_poses) > 0 else np.array([0.0, 0.0])
-            padding = np.tile(last_point, (self.num_samples - len(future_trajectory_relative_poses), 1))
-            future_trajectory_relative_poses = np.concatenate([future_trajectory_relative_poses, padding], axis=0)
+            # 8초 미만인 경우 None 반환 (패딩하지 않음)
+            return None
         elif len(future_trajectory_relative_poses) > self.num_samples:
             # 초과하는 경우 자르기
             future_trajectory_relative_poses = future_trajectory_relative_poses[:self.num_samples]
@@ -118,46 +123,6 @@ class TrajectoryExtractor:
         
         return trajectory_flat
     
-    def normalize_trajectories(self, trajectories: np.ndarray) -> Tuple[np.ndarray, dict]:
-        """
-        전체 데이터셋의 Max/Min을 계산하여 [-1, 1] 범위로 정규화
-        시작점 (x_0, y_0)은 항상 (0, 0)이므로 정규화 후에도 (0, 0)으로 유지
-        
-        Args:
-            trajectories: (N, 160) - N개의 경로
-            
-        Returns:
-            normalized: (N, 160) - 정규화된 경로
-            norm_params: 정규화 파라미터 딕셔너리
-        """
-        # 전체 데이터의 최대/최소값 계산
-        traj_min = np.min(trajectories, axis=0)  # (160,)
-        traj_max = np.max(trajectories, axis=0)  # (160,)
-        
-        # 범위 계산 (0으로 나누기 방지)
-        traj_range = traj_max - traj_min
-        traj_range = np.where(traj_range < 1e-6, 1.0, traj_range)
-        
-        # [-1, 1] 범위로 정규화: (x - min) / range * 2 - 1
-        normalized = (trajectories - traj_min) / traj_range * 2.0 - 1.0
-        
-        # 시작점 (x_0, y_0)은 원본에서 (0, 0)이므로 정규화 후에도 (0, 0)으로 강제 설정
-        # normalized[:, 0] = x_0, normalized[:, 1] = y_0
-        # 시작점이 (0, 0)이면: (0 - min) / range * 2 - 1 = -min/range * 2 - 1
-        # 이를 0으로 만들려면: normalized[:, 0] = 0, normalized[:, 1] = 0
-        normalized[:, 0] = 0.0  # x_0 = 0
-        normalized[:, 1] = 0.0  # y_0 = 0
-        
-        # 정규화 파라미터 저장
-        norm_params = {
-            'min': traj_min.tolist(),
-            'max': traj_max.tolist(),
-            'range': traj_range.tolist()
-        }
-        
-        return normalized, norm_params
-
-
 # 전역 변수 (중단 시 저장용)
 _extracted_trajectories = []
 _extract_start_time = None
@@ -191,7 +156,7 @@ def main():
     parser.add_argument('--data_path', type=str, required=True, help='nuPlan 원본 데이터 경로')
     parser.add_argument('--map_path', type=str, required=True, help='nuPlan 맵 데이터 경로')
     parser.add_argument('--save_path', type=str, required=True, help='저장 경로 (.npz 파일)')
-    parser.add_argument('--num_samples', type=int, default=100000, help='추출할 샘플 수 (기본값: 100000)')
+    parser.add_argument('--num_samples', type=int, default=100000, help='추출할 샘플 수 (기본값: 100000, 0이면 전체 시나리오 사용)')
     parser.add_argument('--log_names_file', type=str, default=None, help='log_names JSON 파일 경로 (선택사항)')
     parser.add_argument('--scenarios_per_type', type=int, default=None, help='시나리오 타입당 개수')
     parser.add_argument('--shuffle_scenarios', type=bool, default=True, help='시나리오 셔플 여부')
@@ -248,8 +213,14 @@ def main():
         all_log_names = sorted(list(set(db_files_list)))  # 중복 제거 및 정렬
         print(f"데이터 경로에서 총 {len(all_log_names)}개 db 파일 발견")
         
-        # 지정된 개수만큼 랜덤 선택
-        if len(all_log_names) > args.num_db_files:
+        # 지정된 개수만큼 랜덤 선택 (num_db_files가 None이거나 0이거나 매우 큰 값이면 전체 사용)
+        use_all_db = (args.num_db_files is None or args.num_db_files == 0 or 
+                     args.num_db_files >= len(all_log_names) or args.num_db_files >= 999999)
+        
+        if use_all_db:
+            log_names = all_log_names
+            print(f"전체 {len(log_names)}개 db 파일 사용")
+        elif len(all_log_names) > args.num_db_files:
             random.seed(args.random_seed)
             log_names = random.sample(all_log_names, args.num_db_files)
             log_names = sorted(log_names)  # 정렬하여 출력
@@ -277,43 +248,115 @@ def main():
     )
     
     # Scenario Filter 생성
-    # 목표 샘플 수에 맞춰 시나리오 수를 제한 (일부 시나리오에서 추출 실패할 수 있으므로 여유를 둠)
-    # 추출 성공률을 고려하여 목표 샘플 수의 1.2배 정도 로드
-    limit_scenarios = int(args.num_samples * 1.2) if args.scenarios_per_type is None else None
-    
+    # 모든 시나리오를 로드하기 위해 limit 제거
     scenario_filter = ScenarioFilter(
         *get_filter_parameters(
             args.scenarios_per_type,  # num_scenarios_per_type
-            limit_scenarios,  # limit_total_scenarios (목표 샘플 수에 맞춰 제한)
+            None,  # limit_total_scenarios (제한 없음)
             args.shuffle_scenarios,  # shuffle
             log_names=log_names  # log_names
         )
     )
     
-    # 시나리오 로드
+    # 시나리오 로드 (모든 시나리오)
     print("시나리오 로드 중...")
     worker = SingleMachineParallelExecutor(use_process_pool=True)
-    scenarios = builder.get_scenarios(scenario_filter, worker)
+    all_scenarios = builder.get_scenarios(scenario_filter, worker)
     
-    print(f"총 {len(scenarios)}개 시나리오 로드 완료 (목표 샘플 수: {args.num_samples}개)")
+    # 시나리오를 리스트로 변환
+    all_scenarios_list = list(all_scenarios)
+    print(f"총 {len(all_scenarios_list)}개 시나리오 로드 완료")
+    
+    # DB 파일별로 시나리오 타입별로 하나씩 선택
+    selected_scenarios = []
+    random.seed(args.random_seed)
+    
+    # 시나리오를 log_name별로 그룹화
+    scenarios_by_log = {}
+    for scenario in all_scenarios_list:
+        try:
+            log_name = scenario.log_name if hasattr(scenario, 'log_name') else 'unknown'
+            if log_name not in scenarios_by_log:
+                scenarios_by_log[log_name] = []
+            scenarios_by_log[log_name].append(scenario)
+        except Exception:
+            log_name = 'unknown'
+            if log_name not in scenarios_by_log:
+                scenarios_by_log[log_name] = []
+            scenarios_by_log[log_name].append(scenario)
+    
+    print(f"\nDB 파일별 시나리오 수:")
+    for log_name, scenarios in sorted(scenarios_by_log.items()):
+        print(f"  {log_name}: {len(scenarios)}개")
+    
+    # 각 DB 파일에서 시나리오 타입별로 하나씩 선택
+    print(f"\n각 DB 파일에서 시나리오 타입별로 하나씩 선택 중...")
+    
+    for log_name, log_scenarios in sorted(scenarios_by_log.items()):
+        # 이 DB 파일의 시나리오를 타입별로 그룹화
+        scenarios_by_type = {}
+        for scenario in log_scenarios:
+            try:
+                scenario_type = scenario.scenario_type if hasattr(scenario, 'scenario_type') else 'unknown'
+                if scenario_type not in scenarios_by_type:
+                    scenarios_by_type[scenario_type] = []
+                scenarios_by_type[scenario_type].append(scenario)
+            except Exception:
+                scenario_type = 'unknown'
+                if scenario_type not in scenarios_by_type:
+                    scenarios_by_type[scenario_type] = []
+                scenarios_by_type[scenario_type].append(scenario)
+        
+        # 각 타입에서 하나씩 선택
+        for stype, scenarios in scenarios_by_type.items():
+            if len(scenarios) > 0:
+                selected = random.choice(scenarios)
+                selected_scenarios.append(selected)
+                print(f"  [{log_name}] [{stype}] 선택됨")
+    
+    print(f"\n총 {len(selected_scenarios)}개 시나리오 선택 완료")
+    
+    # 최종 타입별 분포 확인
+    final_types = {}
+    for scenario in selected_scenarios:
+        try:
+            stype = scenario.scenario_type if hasattr(scenario, 'scenario_type') else 'unknown'
+            final_types[stype] = final_types.get(stype, 0) + 1
+        except:
+            final_types['unknown'] = final_types.get('unknown', 0) + 1
+    
+    print(f"\n최종 선택된 시나리오 타입별 분포:")
+    for stype, count in sorted(final_types.items()):
+        print(f"  {stype}: {count}개")
     
     # Trajectory Extractor 초기화
     extractor = TrajectoryExtractor(sampling_rate=10, sequence_length=8.0)
     
     # 경로 추출
-    print(f"\n경로 추출 시작 (목표: {args.num_samples}개)...")
+    print(f"\n경로 추출 시작 (시나리오 타입별 1개씩, 총 {len(selected_scenarios)}개)...")
     extracted_count = 0
     failed_count = 0
+    too_short_count = 0
     
     trajectories_list = []
+    scenario_types_extracted = {}  # 추출된 시나리오 타입 추적
     
-    for scenario in tqdm(scenarios, desc="경로 추출"):
+    for scenario in tqdm(selected_scenarios, desc="경로 추출"):
         try:
+            scenario_type = scenario.scenario_type if hasattr(scenario, 'scenario_type') else 'unknown'
+            
             trajectory = extractor.extract_trajectory(scenario)
+            
+            # 8초 미만인 경우 스킵
+            if trajectory is None:
+                too_short_count += 1
+                print(f"  경고: [{scenario_type}] 8초 미만 시나리오 스킵")
+                continue
             
             # 유효성 검사: NaN이나 Inf가 없는지 확인
             if np.any(np.isnan(trajectory)) or np.any(np.isinf(trajectory)):
                 failed_count += 1
+                print(f"  경고: [{scenario_type}] 유효하지 않은 값 포함")
                 continue
             
             # 유효성 검사: 경로가 너무 짧거나 이상한 경우 제외
@@ -324,20 +367,30 @@ def main():
             
             if distance < 0.1:  # 0.1m 미만이면 제외
                 failed_count += 1
+                print(f"  경고: [{scenario_type}] 경로가 너무 짧음 ({distance:.3f}m)")
                 continue
             
             trajectories_list.append(trajectory)
             extracted_count += 1
-            
-            # 목표 샘플 수 도달 시 종료
-            if extracted_count >= args.num_samples:
-                break
+            scenario_types_extracted[scenario_type] = scenario_types_extracted.get(scenario_type, 0) + 1
+            print(f"  성공: [{scenario_type}] trajectory 추출 완료")
                 
         except Exception as e:
             failed_count += 1
-            if failed_count % 100 == 0:
-                print(f"\n경고: {failed_count}개 시나리오 처리 실패 (최근 오류: {str(e)[:100]})")
+            scenario_type = scenario.scenario_type if hasattr(scenario, 'scenario_type') else 'unknown'
+            print(f"  오류: [{scenario_type}] {str(e)[:100]}")
             continue
+    
+    # 통계 출력
+    print(f"\n경로 추출 통계:")
+    print(f"  성공적으로 추출된 샘플 수: {extracted_count}")
+    print(f"  8초 미만 시나리오 수: {too_short_count}")
+    print(f"  기타 실패한 시나리오 수: {failed_count}")
+    
+    if scenario_types_extracted:
+        print(f"\n추출된 시나리오 타입별 분포:")
+        for stype, count in sorted(scenario_types_extracted.items()):
+            print(f"  {stype}: {count}개")
     
     # 모든 데이터 저장
     print(f"\n추출된 데이터 저장 중...")
@@ -354,6 +407,7 @@ def main():
     trajectories = trajectories_array
     
     print(f"추출된 총 샘플 수: {len(trajectories)}")
+    print(f"8초 미만 시나리오 수: {too_short_count}")
     print(f"실패한 시나리오 수: {failed_count}")
     print(f"원본 데이터 shape: {trajectories.shape}")
     
@@ -375,6 +429,7 @@ def main():
     print("추출 완료 통계")
     print("="*80)
     print(f"총 추출 샘플 수: {len(trajectories)}")
+    print(f"8초 미만 시나리오 수: {too_short_count}")
     print(f"실패한 시나리오 수: {failed_count}")
     print(f"경로 shape: {trajectories.shape}")
     print(f"경로 통계:")

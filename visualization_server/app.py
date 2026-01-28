@@ -137,6 +137,7 @@ model = None
 config = None
 dataset = None
 device = None
+current_checkpoint_path = None  # 현재 로드된 체크포인트 경로
 latent_z_cache = {}  # 인덱스 -> latent z 매핑
 trajectory_cache = {}  # 인덱스 -> 원본 trajectory 매핑
 reducer_cache = {}  # method -> reducer 매핑 (PCA, t-SNE, UMAP)
@@ -146,7 +147,7 @@ projected_cache = {}  # method -> projected 매핑
 
 def load_model(checkpoint_path, config_path):
     """모델 로드"""
-    global model, config, device
+    global model, config, device, current_checkpoint_path
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'Using device: {device}')
@@ -173,6 +174,7 @@ def load_model(checkpoint_path, config_path):
         try:
             model.load_state_dict(checkpoint['model_state_dict'], strict=False)
             print(f'Loaded model from {checkpoint_path}')
+            current_checkpoint_path = checkpoint_path
         except RuntimeError as e:
             print(f'Warning: Some keys could not be loaded: {e}')
             missing_keys, unexpected_keys = model.load_state_dict(
@@ -183,8 +185,10 @@ def load_model(checkpoint_path, config_path):
             if unexpected_keys:
                 print(f'Unexpected keys (ignored): {unexpected_keys[:5]}...')
             print(f'Model loaded with partial state dict from {checkpoint_path}')
+            current_checkpoint_path = checkpoint_path
     else:
         print(f'Warning: Checkpoint not found at {checkpoint_path}, using untrained model')
+        current_checkpoint_path = None
     
     return model, config
 
@@ -247,10 +251,154 @@ def compute_latent_for_trajectory(trajectory_idx):
     return latent_z_cache[trajectory_idx], trajectory_cache[trajectory_idx]
 
 
+def find_available_checkpoints():
+    """사용 가능한 체크포인트 목록 찾기"""
+    train_output_dir = os.path.join(project_root, 'train', 'train_output', 'vae-planner-training')
+    checkpoints = []
+    
+    # 검색할 디렉토리 목록
+    search_dirs = ['beta1', 'beta4', 'betapoint1']
+    
+    for dir_name in search_dirs:
+        dir_path = os.path.join(train_output_dir, dir_name)
+        if not os.path.exists(dir_path):
+            continue
+        
+        checkpoint_files = []
+        
+        # 1. checkpoints 폴더 안에서 찾기
+        checkpoints_dir = os.path.join(dir_path, 'checkpoints')
+        if os.path.exists(checkpoints_dir):
+            for file in os.listdir(checkpoints_dir):
+                if file.endswith('.pth') and ('checkpoint' in file or 'best_model' in file):
+                    file_path = os.path.join(checkpoints_dir, file)
+                    mtime = os.path.getmtime(file_path)
+                    checkpoint_files.append({
+                        'path': file_path,
+                        'name': file,
+                        'mtime': mtime,
+                        'dir': dir_name
+                    })
+        
+        # 2. checkpoints 폴더가 없으면 디렉토리 자체에서 찾기
+        if not checkpoint_files:
+            for file in os.listdir(dir_path):
+                if file.endswith('.pth') and ('checkpoint' in file or 'best_model' in file):
+                    file_path = os.path.join(dir_path, file)
+                    mtime = os.path.getmtime(file_path)
+                    checkpoint_files.append({
+                        'path': file_path,
+                        'name': file,
+                        'mtime': mtime,
+                        'dir': dir_name
+                    })
+        
+        # 3. 재귀적으로 하위 디렉토리에서도 찾기
+        if not checkpoint_files:
+            for root, dirs, files in os.walk(dir_path):
+                for file in files:
+                    if file.endswith('.pth') and ('checkpoint' in file or 'best_model' in file):
+                        file_path = os.path.join(root, file)
+                        mtime = os.path.getmtime(file_path)
+                        checkpoint_files.append({
+                            'path': file_path,
+                            'name': file,
+                            'mtime': mtime,
+                            'dir': dir_name
+                        })
+        
+        if checkpoint_files:
+            # 최신 체크포인트만 선택
+            latest = max(checkpoint_files, key=lambda x: x['mtime'])
+            checkpoints.append({
+                'name': dir_name,
+                'display_name': f'{dir_name} (Latest)',
+                'path': latest['path'],
+                'file': latest['name'],
+                'mtime': latest['mtime'],
+                'all_checkpoints': sorted(checkpoint_files, key=lambda x: x['mtime'], reverse=True)
+            })
+    
+    # mtime 기준으로 정렬 (최신순)
+    checkpoints.sort(key=lambda x: x['mtime'], reverse=True)
+    
+    return checkpoints
+
+
+@app.route('/api/checkpoints', methods=['GET'])
+def get_checkpoints():
+    """사용 가능한 체크포인트 목록 반환"""
+    try:
+        checkpoints = find_available_checkpoints()
+        return jsonify({
+            'checkpoints': checkpoints,
+            'current': current_checkpoint_path
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
+
+
+@app.route('/api/load-checkpoint', methods=['POST'])
+def load_checkpoint():
+    """체크포인트 변경 및 모델 재로드"""
+    global model, config, latent_z_cache, trajectory_cache, reducer_cache, latent_matrix_cache, projected_cache
+    
+    try:
+        data = request.json
+        checkpoint_path = data.get('checkpoint_path', None)
+        config_path = data.get('config_path', None)
+        
+        if not checkpoint_path:
+            return jsonify({'error': 'checkpoint_path required'}), 400
+        
+        if not os.path.exists(checkpoint_path):
+            return jsonify({'error': f'Checkpoint not found: {checkpoint_path}'}), 404
+        
+        # Config 경로 설정
+        if config_path is None:
+            config_path = os.path.join(project_root, 'train', 'config.yaml')
+        
+        if not os.path.exists(config_path):
+            return jsonify({'error': f'Config not found: {config_path}'}), 404
+        
+        # 캐시 초기화 (새 모델이므로 기존 캐시는 무효)
+        latent_z_cache = {}
+        trajectory_cache = {}
+        reducer_cache = {}
+        latent_matrix_cache = {}
+        projected_cache = {}
+        
+        # 모델 재로드
+        print(f'Reloading model with checkpoint: {checkpoint_path}')
+        load_model(checkpoint_path, config_path)
+        
+        return jsonify({
+            'status': 'success',
+            'checkpoint_path': current_checkpoint_path,
+            'message': 'Model reloaded successfully'
+        })
+    
+    except Exception as e:
+        import traceback
+        return jsonify({
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
+
+
 @app.route('/api/health', methods=['GET'])
 def health():
     """헬스 체크"""
-    return jsonify({'status': 'ok', 'model_loaded': model is not None, 'dataset_loaded': dataset is not None})
+    return jsonify({
+        'status': 'ok', 
+        'model_loaded': model is not None, 
+        'dataset_loaded': dataset is not None,
+        'current_checkpoint': current_checkpoint_path
+    })
 
 
 @app.route('/api/dataset-info', methods=['GET'])
@@ -655,21 +803,37 @@ if __name__ == '__main__':
     # 체크포인트 자동 탐색 (지정되지 않은 경우)
     checkpoint_path = args.checkpoint
     if checkpoint_path is None:
-        train_output_dir = os.path.join(project_root, 'train', 'train_output')
-        if os.path.exists(train_output_dir):
-            checkpoint_files = []
-            for root, dirs, files in os.walk(train_output_dir):
-                for file in files:
-                    if file.endswith('.pth') and ('best_model' in file or 'checkpoint' in file):
-                        checkpoint_files.append(os.path.join(root, file))
-            
-            if checkpoint_files:
-                checkpoint_path = max(checkpoint_files, key=os.path.getmtime)
-                print(f'Auto-detected checkpoint: {checkpoint_path}')
-            else:
-                print('Warning: No checkpoint found in train/train_output, using untrained model')
+        # 기본 체크포인트 경로 시도
+        default_checkpoint = os.path.join(
+            project_root, 
+            'train', 
+            'train_output', 
+            'vae-planner-training', 
+            '2026-01-28-12:56:00', 
+            'checkpoints', 
+            'checkpoint_epoch_234.pth'
+        )
+        
+        if os.path.exists(default_checkpoint):
+            checkpoint_path = default_checkpoint
+            print(f'Using default checkpoint: {checkpoint_path}')
         else:
-            print('Warning: train/train_output directory not found, using untrained model')
+            # 자동 탐색: train_output 디렉토리에서 최신 체크포인트 찾기
+            train_output_dir = os.path.join(project_root, 'train', 'train_output')
+            if os.path.exists(train_output_dir):
+                checkpoint_files = []
+                for root, dirs, files in os.walk(train_output_dir):
+                    for file in files:
+                        if file.endswith('.pth') and ('best_model' in file or 'checkpoint' in file):
+                            checkpoint_files.append(os.path.join(root, file))
+                
+                if checkpoint_files:
+                    checkpoint_path = max(checkpoint_files, key=os.path.getmtime)
+                    print(f'Auto-detected checkpoint: {checkpoint_path}')
+                else:
+                    print('Warning: No checkpoint found in train/train_output, using untrained model')
+            else:
+                print('Warning: train/train_output directory not found, using untrained model')
     
     # 모델 로드
     print('Loading model...')

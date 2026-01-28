@@ -53,60 +53,28 @@ def load_config(config_path):
     return config
 
 
-def get_kl_weight(config, epoch, num_epochs):
+def get_kl_weight(config, epoch=None, num_epochs=None, best_recon_loss=None, current_recon_loss=None, kl_weight_state=None):
     """
-    β-VAE Annealing: epoch에 따라 KL weight를 동적으로 계산
+    KL weight 반환 (어닐링 없이 고정값 사용)
     
     Args:
         config: 설정 딕셔너리
-        epoch: 현재 epoch (0부터 시작)
-        num_epochs: 전체 epoch 수
+        epoch: 사용하지 않음 (하위 호환성을 위해 유지)
+        num_epochs: 사용하지 않음 (하위 호환성을 위해 유지)
+        best_recon_loss: 사용하지 않음 (하위 호환성을 위해 유지)
+        current_recon_loss: 사용하지 않음 (하위 호환성을 위해 유지)
+        kl_weight_state: 사용하지 않음 (하위 호환성을 위해 유지)
     
     Returns:
-        kl_weight: 현재 epoch에 사용할 KL weight
+        kl_weight: config에서 지정한 고정 KL weight
+        None: 상태 없음
     """
     model_cfg = config.get('model', {})
-    annealing_cfg = model_cfg.get('kl_annealing', {})
-    
-    # Annealing이 비활성화되어 있으면 기본값 사용
-    if not annealing_cfg.get('enabled', False):
-        return float(model_cfg.get('kl_weight', 1.0))
-    
-    start_weight = float(annealing_cfg.get('start_weight', 0.01))
-    end_weight = float(annealing_cfg.get('end_weight', model_cfg.get('kl_weight', 1.0)))
-    annealing_type = annealing_cfg.get('annealing_type', 'linear')
-    warmup_epochs = int(annealing_cfg.get('warmup_epochs', 0))
-    
-    # Warmup 기간 동안은 start_weight 유지
-    if epoch < warmup_epochs:
-        return start_weight
-    
-    # Annealing 적용할 epoch 범위 계산
-    annealing_start_epoch = warmup_epochs
-    annealing_end_epoch = num_epochs
-    annealing_epochs = annealing_end_epoch - annealing_start_epoch
-    
-    if annealing_epochs <= 0:
-        return end_weight
-    
-    # 현재 annealing 진행률 (0.0 ~ 1.0)
-    progress = (epoch - annealing_start_epoch) / annealing_epochs
-    progress = min(1.0, max(0.0, progress))  # Clamp to [0, 1]
-    
-    # Annealing 타입에 따라 weight 계산
-    if annealing_type == 'linear':
-        kl_weight = start_weight + (end_weight - start_weight) * progress
-    elif annealing_type == 'cosine':
-        import math
-        kl_weight = start_weight + (end_weight - start_weight) * (1 - math.cos(math.pi * progress)) / 2
-    else:
-        # 기본값: linear
-        kl_weight = start_weight + (end_weight - start_weight) * progress
-    
-    return kl_weight
+    kl_weight = float(model_cfg.get('kl_weight', 1.0))
+    return kl_weight, None
 
 
-def train_epoch(model, dataloader, optimizer, device, config, epoch, num_epochs, writer=None, use_wandb=False, global_scenario_count=0, log_interval_scenarios=1000, batch_size=32, last_logged_scenario=0):
+def train_epoch(model, dataloader, optimizer, device, config, epoch, num_epochs, writer=None, use_wandb=False, global_scenario_count=0, log_interval_scenarios=1000, batch_size=32, last_logged_scenario=0, kl_weight=None):
     """한 에포크 학습"""
     model.train()
     total_loss = 0.0
@@ -140,8 +108,10 @@ def train_epoch(model, dataloader, optimizer, device, config, epoch, num_epochs,
         # 모델 출력은 이미 적절한 스케일로 나옴 (정규화된 경우 정규화된 값, 아닌 경우 원본 스케일)
         
         # Compute loss
-        # β-VAE Annealing: epoch에 따라 kl_weight 동적 계산
-        kl_weight = get_kl_weight(config, epoch, num_epochs)
+        # KL weight는 config에서 고정값 사용
+        if kl_weight is None:
+            # Fallback: kl_weight가 전달되지 않은 경우
+            kl_weight = get_kl_weight(config)[0]
         
         loss, recon_loss, kl_loss = compute_loss(
             reconstructed_ego_future_trajectory=output['reconstructed_ego_future_trajectory'],
@@ -762,6 +732,35 @@ def main():
         weight_decay=weight_decay
     )
     
+    # Learning Rate Scheduler: Reconstruction error 개선이 없을 때 학습률 감소
+    scheduler_cfg = config['training'].get('lr_scheduler', {})
+    if scheduler_cfg.get('enabled', True):
+        scheduler_mode = scheduler_cfg.get('mode', 'min')  # 'min' for reconstruction error
+        scheduler_factor = float(scheduler_cfg.get('factor', 0.5))  # 학습률 감소 비율
+        scheduler_patience = int(scheduler_cfg.get('patience', 5))  # 개선 없을 때 기다릴 epoch 수
+        scheduler_threshold = float(scheduler_cfg.get('threshold', 1e-4))  # 개선으로 간주할 최소 변화량
+        scheduler_min_lr = float(scheduler_cfg.get('min_lr', 1e-6))  # 최소 학습률
+        scheduler_cooldown = int(scheduler_cfg.get('cooldown', 0))  # 학습률 감소 후 대기 epoch 수
+        
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode=scheduler_mode,
+            factor=scheduler_factor,
+            patience=scheduler_patience,
+            threshold=scheduler_threshold,
+            min_lr=scheduler_min_lr,
+            cooldown=scheduler_cooldown
+        )
+        print(f'Learning Rate Scheduler 설정:')
+        print(f'  - 모드: {scheduler_mode} (reconstruction error 감소 모니터링)')
+        print(f'  - 감소 비율: {scheduler_factor}')
+        print(f'  - Patience: {scheduler_patience} epochs')
+        print(f'  - 최소 학습률: {scheduler_min_lr}')
+        print()
+    else:
+        scheduler = None
+        print('Learning Rate Scheduler 비활성화됨')
+    
     # Resume from checkpoint
     start_epoch = 0
     wandb_id = None
@@ -771,6 +770,9 @@ def main():
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         start_epoch = checkpoint['epoch'] + 1
         wandb_id = checkpoint.get('wandb_id', None)
+        # Scheduler state 복원 (있는 경우)
+        if scheduler is not None and 'scheduler_state_dict' in checkpoint:
+            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         print(f'Resumed from epoch {start_epoch}')
     
     # TensorBoard
@@ -852,6 +854,7 @@ def main():
     
     # Training loop
     best_train_loss = float('inf')
+    best_recon_loss = float('inf')  # 최고 reconstruction loss 추적
     best_epoch = -1  # 최고 성능 에포크 추적
     global_scenario_count = 0  # 전체 처리된 시나리오 수 추적 (step으로 사용)
     last_logged_scenario = 0  # 마지막 로깅 시나리오 수
@@ -859,11 +862,11 @@ def main():
     batch_size = config['training']['batch_size']
     
     num_epochs = config['training']['num_epochs']
+    # KL weight는 고정값 사용 (어닐링 없음)
+    current_kl_weight = get_kl_weight(config)[0]
+    print(f'Using fixed KL weight = {current_kl_weight:.6f}')
+    
     for epoch in range(start_epoch, num_epochs):
-        # 현재 epoch의 KL weight 계산 및 로깅
-        current_kl_weight = get_kl_weight(config, epoch, num_epochs)
-        if epoch == start_epoch or epoch % 5 == 0:  # 첫 epoch와 5 epoch마다 출력
-            print(f'Epoch {epoch}: Using KL weight = {current_kl_weight:.4f}')
         
         # Train
         train_loss, train_recon_loss, train_kl_loss, current_scenario_count, last_log_scenario = train_epoch(
@@ -872,7 +875,8 @@ def main():
             global_scenario_count=global_scenario_count, 
             log_interval_scenarios=log_interval_scenarios,
             batch_size=batch_size,
-            last_logged_scenario=last_logged_scenario
+            last_logged_scenario=last_logged_scenario,
+            kl_weight=current_kl_weight  # 계산된 KL weight 전달
         )
 
         # global_scenario_count 업데이트 (에포크가 끝난 후)
@@ -886,8 +890,11 @@ def main():
         # Learning rate
         current_lr = optimizer.param_groups[0]['lr']
         
-        # 현재 epoch의 KL weight 가져오기
-        current_kl_weight = get_kl_weight(config, epoch, num_epochs)
+        # Best reconstruction loss 업데이트
+        if train_recon_loss < best_recon_loss:
+            best_recon_loss = train_recon_loss
+        
+        # KL weight는 고정값 사용 (어닐링 없음)
         
         # Logging (카테고리별로 구분된 메트릭) - 에포크 평균값
         log_dict = {
@@ -917,6 +924,14 @@ def main():
         print(f'  Train Loss: {train_loss:.4f} (Recon: {train_recon_loss:.4f}, KL: {train_kl_loss:.4f})')
         print(f'  Learning Rate: {current_lr:.6f}')
         
+        # Learning Rate Scheduler 업데이트 (reconstruction error 기준)
+        if scheduler is not None:
+            old_lr = optimizer.param_groups[0]['lr']
+            scheduler.step(train_recon_loss)  # reconstruction error를 기준으로 학습률 조정
+            new_lr = optimizer.param_groups[0]['lr']
+            if old_lr != new_lr:
+                print(f'  ⚠️  학습률 조정: {old_lr:.6f} → {new_lr:.6f} (Recon Loss: {train_recon_loss:.4f})')
+        
         # Save checkpoint
         if train_loss < best_train_loss:
             best_train_loss = train_loss
@@ -932,6 +947,9 @@ def main():
                 'train_loss': train_loss,
                 'wandb_id': wandb.run.id if (args.use_wandb and wandb.run) else None,
             }
+            # Scheduler state 저장 (있는 경우)
+            if scheduler is not None:
+                checkpoint_dict['scheduler_state_dict'] = scheduler.state_dict()
             torch.save(checkpoint_dict, checkpoint_path)
             print(f'  Saved best model to {checkpoint_path}')
             
@@ -951,6 +969,9 @@ def main():
                 'train_loss': train_loss,
                 'wandb_id': wandb.run.id if (args.use_wandb and wandb.run) else None,
             }
+            # Scheduler state 저장 (있는 경우)
+            if scheduler is not None:
+                checkpoint_dict['scheduler_state_dict'] = scheduler.state_dict()
             torch.save(checkpoint_dict, checkpoint_path)
             print(f'  Saved checkpoint to {checkpoint_path}')
     

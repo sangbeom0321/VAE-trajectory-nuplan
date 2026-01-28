@@ -58,7 +58,14 @@ class VAEDecoder(nn.Module):
     Deep MLP 구조: Latent Space (32차원) → 128 → 256 → 512 → 160차원
     """
     
-    def __init__(self, latent_dim, output_dim, hidden_dims=[128, 256, 512]):
+    def __init__(self, latent_dim, output_dim, hidden_dims=[128, 256, 512], use_tanh=True):
+        """
+        Args:
+            latent_dim: Latent space 차원
+            output_dim: 출력 차원
+            hidden_dims: Hidden layer 차원 리스트
+            use_tanh: Tanh 활성화 함수 사용 여부 (정규화된 데이터일 때만 True)
+        """
         super().__init__()
         
         # Decoder layers with Batch Normalization
@@ -73,8 +80,13 @@ class VAEDecoder(nn.Module):
             ])
             prev_dim = hidden_dim
         
-        # Output layer (no activation, no normalization)
+        # Output layer
         layers.append(nn.Linear(prev_dim, output_dim))
+        
+        # 정규화된 데이터일 때만 Tanh 적용 ([-1, 1] 범위로 제한)
+        # 정규화 없이 학습할 때는 Tanh를 제거하여 원본 스케일로 출력 가능하게 함
+        if use_tanh:
+            layers.append(nn.Tanh())  # 출력을 [-1, 1] 범위로 제한
         
         self.decoder = nn.Sequential(*layers)
     

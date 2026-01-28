@@ -1,5 +1,5 @@
 """
-10만 개 trajectory 시각화 스크립트
+Trajectory 데이터 시각화 스크립트
 """
 
 import numpy as np
@@ -9,13 +9,13 @@ import os
 from tqdm import tqdm
 
 
-def visualize_trajectories(data_path, num_samples=None, max_display=None, save_dir='./trajectory_visualizations'):
+def visualize_trajectories(data_path, num_samples=100000, max_display=None, save_dir='./trajectory_visualizations'):
     """
     Trajectory 데이터 시각화
     
     Args:
         data_path: .npz 파일 경로
-        num_samples: 시각화할 샘플 수 (None이면 전체 데이터 사용)
+        num_samples: 시각화할 샘플 수 (최대)
         max_display: 실제로 그릴 샘플 수 (None이면 전체 샘플 모두 그림)
         save_dir: 저장 디렉토리
     """
@@ -36,17 +36,14 @@ def visualize_trajectories(data_path, num_samples=None, max_display=None, save_d
         trajectories = trajectories_xy.reshape(-1, 160).astype(np.float32)
         print(f"변환 후 shape: {trajectories.shape}")
     
-    # 샘플 수 제한 (num_samples가 None이면 전체 사용)
-    if num_samples is not None:
-        num_samples = min(num_samples, len(trajectories))
-        trajectories = trajectories[:num_samples]
-    print(f"전체 데이터 수: {len(trajectories)}")
+    # 샘플 수 제한
+    num_samples = min(num_samples, len(trajectories))
+    trajectories = trajectories[:num_samples]
     
     # (N, 160) -> (N, 80, 2)로 reshape
     trajectories_xy = trajectories.reshape(-1, 80, 2)
     
     # 시작점 (x_0, y_0)은 항상 (0, 0)이어야 함 (로컬 좌표계)
-    # 정규화된 데이터에서도 시작점을 (0, 0)으로 강제 설정
     trajectories_xy[:, 0, 0] = 0.0  # x_0 = 0
     trajectories_xy[:, 0, 1] = 0.0  # y_0 = 0
     
@@ -75,17 +72,39 @@ def visualize_trajectories(data_path, num_samples=None, max_display=None, save_d
     
     print(f"\n시각화 생성 중...")
     
-    # 1. 전체 경로 오버레이
+    # 1. 전체 경로 오버레이 (모든 점 표시)
     fig, ax = plt.subplots(figsize=(12, 12))
-    for idx in tqdm(indices, desc="Drawing trajectories"):
-        traj = trajectories_xy[idx]
-        ax.plot(traj[:, 0], traj[:, 1], 'b-', alpha=0.1, linewidth=0.5)
     
-    # 시작점과 끝점 표시
-    start_points = trajectories_xy[indices, 0, :]
-    end_points = trajectories_xy[indices, -1, :]
-    ax.scatter(start_points[:, 0], start_points[:, 1], c='green', s=10, alpha=0.5, label='Start', zorder=5)
-    ax.scatter(end_points[:, 0], end_points[:, 1], c='red', s=10, alpha=0.5, label='End', zorder=5)
+    # 모든 trajectory의 모든 점을 수집
+    all_points_x = []
+    all_points_y = []
+    start_points_x = []
+    start_points_y = []
+    end_points_x = []
+    end_points_y = []
+    
+    for idx in tqdm(indices, desc="Collecting points"):
+        traj = trajectories_xy[idx]
+        
+        # 선 그리기
+        ax.plot(traj[:, 0], traj[:, 1], 'b-', alpha=0.1, linewidth=0.5)
+        
+        # 모든 점 수집
+        all_points_x.extend(traj[:, 0])
+        all_points_y.extend(traj[:, 1])
+        
+        # 시작점과 끝점
+        start_points_x.append(traj[0, 0])
+        start_points_y.append(traj[0, 1])
+        end_points_x.append(traj[-1, 0])
+        end_points_y.append(traj[-1, 1])
+    
+    # 모든 점 표시
+    ax.scatter(all_points_x, all_points_y, c='blue', s=1, alpha=0.3, label='All points', zorder=3)
+    
+    # 시작점과 끝점 표시 (더 크고 진하게)
+    ax.scatter(start_points_x, start_points_y, c='green', s=20, alpha=0.7, label='Start', zorder=5, marker='o')
+    ax.scatter(end_points_x, end_points_y, c='red', s=20, alpha=0.7, label='End', zorder=5, marker='s')
     
     ax.set_xlabel('X (m)', fontsize=12)
     ax.set_ylabel('Y (m)', fontsize=12)
@@ -114,9 +133,10 @@ def visualize_trajectories(data_path, num_samples=None, max_display=None, save_d
         
         traj = trajectories_xy[idx]
         ax = axes[i]
-        ax.plot(traj[:, 0], traj[:, 1], 'b-', linewidth=1.5)
-        ax.scatter(traj[0, 0], traj[0, 1], c='green', s=50, marker='o', zorder=5)
-        ax.scatter(traj[-1, 0], traj[-1, 1], c='red', s=50, marker='s', zorder=5)
+        
+        # 선만 그리기 (점 없음)
+        ax.plot(traj[:, 0], traj[:, 1], 'b-', linewidth=1.5, alpha=0.7)
+        
         ax.set_title(f'Sample {idx}', fontsize=8)
         ax.grid(True, alpha=0.3)
         ax.set_aspect('equal')
@@ -182,9 +202,11 @@ def visualize_trajectories(data_path, num_samples=None, max_display=None, save_d
 
 def main():
     parser = argparse.ArgumentParser(description='Trajectory 시각화')
-    parser.add_argument('--data_path', type=str, required=True, help='.npz 파일 경로')
-    parser.add_argument('--num_samples', type=lambda x: None if x == 'None' else int(x), default=None, help='시각화할 샘플 수 (None이면 전체 데이터 사용, 기본값: None)')
-    parser.add_argument('--max_display', type=lambda x: None if x == 'None' else int(x), default=None, help='실제로 그릴 샘플 수 (오버레이용, None이면 전체, 기본값: None)')
+    parser.add_argument('--data_path', type=str, 
+                       default='/home/daniel/99_dataset/01_nuplan/dataset/vae/trajectories_8s.npz',
+                       help='.npz 파일 경로')
+    parser.add_argument('--num_samples', type=int, default=100000, help='시각화할 샘플 수')
+    parser.add_argument('--max_display', type=int, default=5000, help='실제로 그릴 샘플 수 (오버레이용, 기본값: 5000)')
     parser.add_argument('--save_dir', type=str, default='./trajectory_visualizations', help='저장 디렉토리')
     
     args = parser.parse_args()

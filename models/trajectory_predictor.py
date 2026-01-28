@@ -29,6 +29,12 @@ class TrajectoryPredictor(nn.Module):
         # VAE Components
         latent_dim = model_cfg['latent_dim']
         
+        # 정규화 여부 확인 (config에서 data.normalize 확인)
+        # 정규화된 데이터면 Tanh 사용, 아니면 제거
+        data_cfg = config.get('data', {})
+        use_normalize = data_cfg.get('normalize', True)  # 기본값: True (정규화 사용)
+        use_tanh = use_normalize  # 정규화 사용 시에만 Tanh 적용
+        
         # Encoder: 160차원 경로 벡터 → 32차원 latent
         # Deep MLP 구조: 160 → 512 → 256 → 128 → 32
         self.vae_encoder = VAEEncoder(
@@ -39,10 +45,13 @@ class TrajectoryPredictor(nn.Module):
         
         # Decoder: 32차원 latent → 160차원 경로 벡터 복원
         # Deep MLP 구조: 32 → 128 → 256 → 512 → 160
+        # 정규화 사용 시: Tanh로 [-1, 1] 범위 제한
+        # 정규화 없이: Tanh 제거하여 원본 스케일로 출력
         self.vae_decoder = VAEDecoder(
             latent_dim=latent_dim,  # 32차원
             output_dim=self.input_dim,  # 160차원
-            hidden_dims=[128, 256, 512]  # Encoder와 대칭 구조
+            hidden_dims=[128, 256, 512],  # Encoder와 대칭 구조
+            use_tanh=use_tanh  # 정규화 여부에 따라 Tanh 적용/제거
         )
         
         # 출력 shape 정보 저장

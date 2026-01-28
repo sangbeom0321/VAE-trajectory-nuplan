@@ -111,6 +111,7 @@ header h1 {
   gap: 20px;
 }
 
+.checkpoint-selector,
 .method-selector,
 .mode-selector {
   display: flex;
@@ -118,6 +119,7 @@ header h1 {
   gap: 8px;
 }
 
+.checkpoint-selector label,
 .method-selector label,
 .mode-selector label {
   font-size: 0.85rem;
