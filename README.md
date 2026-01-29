@@ -133,6 +133,8 @@ chmod +x extract_8s_trajectories.sh
 
 추출된 데이터를 시각화하여 확인할 수 있습니다:
 
+![Input Data](assets/input_data.png)
+
 ```bash
 cd data
 ./visualize_trajectories.sh
@@ -356,7 +358,10 @@ VAE-Planner/
 │   └── start_server.sh           # 서버 시작 스크립트
 ├── assets/                       # 에셋 (이미지, gif)
 │   ├── model_architecture.png
-│   └── VAE_results_1.gif
+│   ├── VAE_results_1.gif
+│   ├── input_data.png            # 입력 데이터 시각화
+│   ├── pca.png                   # PCA 기반 latent space 시각화
+│   └── tsne.png                  # t-SNE 기반 latent space 시각화
 ├── requirements.txt              # 메인 Python 의존성
 └── README.md                     # 이 파일
 ```
@@ -379,6 +384,33 @@ VAE-Planner/
 - PCA를 사용하여 latent space를 2D로 projection
 - 카테고리별 경로 샘플 시각화
 
+#### PCA 기반 Latent Space 시각화
+
+![PCA Latent Space](assets/pca.png)
+
+PCA (Principal Component Analysis)를 사용하여 32차원 latent space를 2D로 투영한 결과입니다. 각 색상은 경로 분류를 나타냅니다.
+
+#### t-SNE 기반 Latent Space 시각화
+
+![t-SNE Latent Space](assets/tsne.png)
+
+t-SNE (t-Distributed Stochastic Neighbor Embedding)를 사용하여 latent space의 클러스터 구조를 시각화한 결과입니다. 유사한 경로 패턴이 가까이 모여 있는 것을 확인할 수 있습니다.
+
+### 분류 조건 설명
+
+경로는 다음과 같은 조건에 따라 분류됩니다:
+
+| 분류 | 조건 | 설명 |
+|------|------|------|
+| **Stop (정지)** | 경로 길이 < 2.0m | 시작점과 끝점 사이의 직선 거리가 2m 미만 |
+| **Straight (직진)** | -10° ≤ 각도 ≤ 10° | 시작점-끝점 각도가 거의 직진 |
+| **Straight(sharp) (급커브 직진)** | 직진 + 급커브 | 직진 방향이지만 평균 곡률 > 0.15 rad 또는 최대 곡률 > 0.3 rad |
+| **Straight(slow) (느린 직진)** | 직진 + 느린 속도 | 직진 방향이지만 평균 속도 < 5 m/s |
+| **Left Turn (좌회전)** | 각도 > 10° | 시작점-끝점 각도가 좌측 방향 |
+| **Left Turn(Slow) (느린 좌회전)** | 좌회전 + 느린 속도 | 좌회전 방향이지만 평균 속도 < 5 m/s |
+| **Right Turn (우회전)** | 각도 < -10° | 시작점-끝점 각도가 우측 방향 |
+| **Right Turn(Slow) (느린 우회전)** | 우회전 + 느린 속도 | 우회전 방향이지만 평균 속도 < 5 m/s |
+
 ## 📝 참고사항
 
 - 학습에 사용된 원본 경로는 `train_output/<experiment_name>/<timestamp>/original_trajectories.npz`에 저장됩니다
@@ -393,4 +425,3 @@ VAE-Planner/
 ## 🙏 감사의 말
 
 - nuPlan Dataset: [nuPlan-devkit](https://github.com/motional/nuplan-devkit)
-- 시각화 서버는 CVAE-Planner의 visualization_server를 참고하여 제작되었습니다
