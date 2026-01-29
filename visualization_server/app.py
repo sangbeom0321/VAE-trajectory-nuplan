@@ -31,7 +31,77 @@ from models.trajectory_predictor import TrajectoryPredictor
 from models.vae import reparameterize
 from data.trajectory_dataset import TrajectoryDataset
 
-# Trajectory 분류 함수 (개선된 다차원 분류)
+# Trajectory 분류 함수들
+def train_kmeans_model(k=5, num_samples=1000, random_seed=42):
+    """
+    K-means 모델 학습
+    
+    Args:
+        k: 클러스터 수
+        num_samples: 학습에 사용할 샘플 수
+        random_seed: 랜덤 시드
+    """
+    global kmeans_model, kmeans_k, dataset
+    
+    if dataset is None:
+        print("Error: Dataset not loaded")
+        return False
+    
+    print(f"Training K-means model (k={k}, num_samples={num_samples})...")
+    
+    # 샘플링
+    np.random.seed(random_seed)
+    total_samples = len(dataset)
+    num_samples = min(num_samples, total_samples)
+    
+    if num_samples < total_samples:
+        sample_indices = np.random.choice(total_samples, num_samples, replace=False)
+    else:
+        sample_indices = np.arange(total_samples)
+    
+    # 궤적 데이터 수집
+    trajectories_list = []
+    for idx in sample_indices:
+        traj_xy = dataset.get_trajectory_as_xy(idx, denormalize=True)
+        traj_flat = traj_xy.reshape(-1).astype(np.float32)
+        trajectories_list.append(traj_flat)
+    
+    trajectories_array = np.array(trajectories_list)  # (num_samples, 160)
+    
+    # K-means 학습
+    from sklearn.cluster import KMeans
+    kmeans_model = KMeans(n_clusters=k, random_state=random_seed, n_init=10, max_iter=300)
+    kmeans_model.fit(trajectories_array)
+    kmeans_k = k
+    
+    print(f"K-means model trained successfully (k={k})")
+    return True
+
+def classify_trajectory_kmeans(trajectory_xy):
+    """
+    K-means 클러스터링 기반 분류
+    
+    Args:
+        trajectory_xy: (80, 2) - [x, y] coordinate array
+        
+    Returns:
+        label: 클러스터 번호를 문자열로 반환 (예: 'cluster_0', 'cluster_1', ...)
+    """
+    global kmeans_model
+    
+    if kmeans_model is None:
+        # K-means 모델이 없으면 기본값 반환
+        return 'cluster_unknown'
+    
+    # trajectory_xy를 (160,) 형태로 변환
+    trajectory_flat = trajectory_xy.reshape(-1).astype(np.float32)
+    
+    # K-means 예측
+    cluster_label = kmeans_model.predict(trajectory_flat.reshape(1, -1))[0]
+    
+    return f'cluster_{cluster_label}'
+
+# Trajectory 분류 함수 (개선된 다차원 분류) - 룰 기반
 def classify_trajectory(trajectory_xy):
     """
     개선된 분류 로직: 여러 특성을 조합하여 더 의미있는 분류
@@ -138,6 +208,8 @@ config = None
 dataset = None
 device = None
 current_checkpoint_path = None  # 현재 로드된 체크포인트 경로
+kmeans_model = None  # K-means 클러스터링 모델 (k=5)
+kmeans_k = 5  # K-means 클러스터 수
 latent_z_cache = {}  # 인덱스 -> latent z 매핑
 trajectory_cache = {}  # 인덱스 -> 원본 trajectory 매핑
 reducer_cache = {}  # method -> reducer 매핑 (PCA, t-SNE, UMAP)
@@ -466,6 +538,7 @@ def compute_latent_space():
         trajectory_indices = data.get('trajectory_indices', None)
         method = data.get('method', 'pca')  # 'pca', 'tsne', or 'umap'
         max_samples = data.get('max_samples', None)  # 기본값: None (전체 사용)
+        classification_method = data.get('classification_method', 'rule')  # 'rule' or 'kmeans'
         
         # UMAP 사용 가능 여부 확인
         if method == 'umap' and not UMAP_AVAILABLE:
@@ -578,8 +651,14 @@ def compute_latent_space():
             else:
                 trajectory_xy_np = np.array(trajectory_xy)
             
-            # Trajectory 분류
-            label = classify_trajectory(trajectory_xy_np)
+            # Trajectory 분류 (방법 선택)
+            if classification_method == 'kmeans':
+                # K-means 모델이 없으면 학습
+                if kmeans_model is None:
+                    train_kmeans_model(k=5, num_samples=1000)
+                label = classify_trajectory_kmeans(trajectory_xy_np)
+            else:  # 'rule' (기본값)
+                label = classify_trajectory(trajectory_xy_np)
             
             # latent_vectors[i]는 이미 list (compute_latent_for_trajectory에서 .tolist() 호출)
             latent_z_value = latent_vectors[i]
@@ -592,7 +671,8 @@ def compute_latent_space():
                 'y': float(projected[i, 1]),
                 'latent': latent_z_value,  # 이미 list이거나 numpy array를 list로 변환
                 'trajectory': trajectory_xy,  # 원본 trajectory 포함
-                'label': label  # 분류 라벨 추가
+                'label': label,  # 분류 라벨 추가
+                'classification_method': classification_method  # 사용된 분류 방법
             })
         
         response_data = {
@@ -658,6 +738,19 @@ def generate_trajectory_from_point():
         if method == 'pca':
             # PCA는 선형 변환이라 역변환이 가능 - 클릭한 위치를 직접 사용
             latent_z_approx = reducer.inverse_transform(point_2d)[0]  # (latent_dim,)
+            
+            # PCA 역변환 결과가 학습 데이터의 latent z 범위를 벗어나는지 확인
+            latent_z_min = np.min(latent_matrix, axis=0)
+            latent_z_max = np.max(latent_matrix, axis=0)
+            latent_z_range = latent_z_max - latent_z_min
+            
+            # 범위를 벗어난 정도 계산
+            out_of_range_mask = (latent_z_approx < latent_z_min) | (latent_z_approx > latent_z_max)
+            if np.any(out_of_range_mask):
+                # 범위를 벗어난 차원들을 학습 데이터 범위로 클리핑
+                latent_z_approx = np.clip(latent_z_approx, latent_z_min, latent_z_max)
+                print(f'Warning: PCA inverse transform resulted in out-of-range latent z. Clipped to valid range.')
+            
             print(f'PCA inverse transform: clicked 2D=[{x_2d:.4f}, {y_2d:.4f}]')
         else:
             # t-SNE/UMAP은 비선형 변환이라 역변환이 불가능
@@ -665,20 +758,55 @@ def generate_trajectory_from_point():
             distances = np.sum((projected - point_2d) ** 2, axis=1)
             
             # 가장 가까운 k개 점 사용 (더 많은 점을 사용하면 더 부드러운 보간)
-            k = min(15, len(projected))
+            # 거리가 멀수록 더 많은 점을 사용하여 보간의 안정성 향상
+            k = min(30, len(projected))  # 최대 30개까지 사용
             nearest_indices = np.argsort(distances)[:k]
             nearest_distances = distances[nearest_indices]
             
-            # 거리 기반 가중치: 가까울수록 높은 가중치 (역수 사용, 제곱으로 더 강하게)
-            # 거리가 0이면 가중치가 매우 높아지도록
-            weights = 1.0 / (nearest_distances ** 2 + 1e-10)
-            weights = weights / np.sum(weights)  # 정규화
+            # 가장 가까운 점까지의 거리 확인
+            min_distance = np.sqrt(nearest_distances[0])
             
-            # 가중 평균으로 latent z 계산 (직접 보간)
-            latent_z_approx = np.sum(latent_matrix[nearest_indices] * weights[:, np.newaxis], axis=0)
-            
-            print(f'Direct interpolation ({method}): clicked 2D=[{x_2d:.4f}, {y_2d:.4f}], using {k} nearest points')
-            print(f'  Nearest point distance: {np.sqrt(nearest_distances[0]):.4f}, weight: {weights[0]:.4f}')
+            # 학습 데이터의 평균 거리를 기준으로 거리 정규화
+            if len(projected) > 1:
+                # 학습 데이터 간 평균 거리 계산 (캐싱 가능하지만 일단 매번 계산)
+                sample_distances = []
+                sample_size = min(1000, len(projected))
+                sample_indices = np.random.choice(len(projected), sample_size, replace=False)
+                for i in range(min(100, sample_size)):
+                    for j in range(i+1, min(i+10, sample_size)):
+                        dist = np.sqrt(np.sum((projected[sample_indices[i]] - projected[sample_indices[j]]) ** 2))
+                        sample_distances.append(dist)
+                avg_distance = np.mean(sample_distances) if sample_distances else 1.0
+                
+                # 거리 정규화 (평균 거리 기준)
+                normalized_distances = np.sqrt(nearest_distances) / (avg_distance + 1e-10)
+                
+                # 거리가 멀수록 가중치를 더 부드럽게 감소시키는 함수 사용
+                # 가우시안 커널 기반 가중치: exp(-d^2 / (2*sigma^2))
+                # 거리가 멀수록 sigma를 크게 하여 더 많은 점의 영향을 받도록
+                if min_distance > avg_distance * 2.0:
+                    # 거리가 멀면 더 넓은 범위의 점들을 고려 (sigma를 크게)
+                    sigma = avg_distance * 2.0
+                    print(f'Warning: Clicked point is far from data manifold (distance: {min_distance:.4f}, avg: {avg_distance:.4f})')
+                    print(f'  Using wider interpolation kernel (sigma={sigma:.4f})')
+                else:
+                    # 거리가 가까우면 좁은 범위의 점들만 고려 (sigma를 작게)
+                    sigma = avg_distance * 0.5
+                
+                # 가우시안 커널 기반 가중치 계산
+                weights = np.exp(-normalized_distances ** 2 / (2 * (sigma / avg_distance) ** 2))
+                weights = weights / (np.sum(weights) + 1e-10)  # 정규화
+                
+                # 가중 평균으로 latent z 계산 (보간)
+                latent_z_approx = np.sum(latent_matrix[nearest_indices] * weights[:, np.newaxis], axis=0)
+                
+                print(f'Gaussian kernel interpolation ({method}): clicked 2D=[{x_2d:.4f}, {y_2d:.4f}], using {k} nearest points')
+                print(f'  Nearest point distance: {min_distance:.4f}, avg distance: {avg_distance:.4f}')
+                print(f'  Weight distribution: min={np.min(weights):.4f}, max={np.max(weights):.4f}, mean={np.mean(weights):.4f}')
+            else:
+                # 데이터가 부족한 경우 가장 가까운 점 사용
+                latent_z_approx = latent_matrix[nearest_indices[0]].copy()
+                print(f'Direct interpolation ({method}): using nearest point only (insufficient data)')
         
         # 디코더로 trajectory 생성
         with torch.no_grad():
@@ -702,7 +830,44 @@ def generate_trajectory_from_point():
         trajectory_np[0, 0] = 0.0
         trajectory_np[0, 1] = 0.0
         
-        # Trajectory 분류
+        # 생성된 trajectory 검증
+        # 1. 경로 길이 확인 (너무 짧으면 문제)
+        path_lengths = np.linalg.norm(np.diff(trajectory_np, axis=0), axis=1)
+        total_length = np.sum(path_lengths)
+        
+        # 2. 모든 점이 (0,0)에 가까운지 확인 (비정상적인 경우)
+        distances_from_origin = np.linalg.norm(trajectory_np, axis=1)
+        max_distance = np.max(distances_from_origin)
+        
+        # 3. NaN이나 Inf 확인
+        has_nan = np.any(np.isnan(trajectory_np))
+        has_inf = np.any(np.isinf(trajectory_np))
+        
+        print(f'Trajectory validation: length={total_length:.2f}m, max_distance={max_distance:.2f}m, has_nan={has_nan}, has_inf={has_inf}')
+        
+        # 비정상적인 trajectory 감지
+        if has_nan or has_inf:
+            return jsonify({
+                'error': 'Generated trajectory contains invalid values (NaN or Inf). Please try clicking closer to existing data points.',
+                'is_invalid': True
+            }), 400
+        
+        if total_length < 0.1:  # 10cm 미만이면 너무 짧음
+            return jsonify({
+                'error': f'Generated trajectory is too short ({total_length:.2f}m). This may happen when clicking far from the data manifold. Please try clicking closer to existing data points.',
+                'is_invalid': True,
+                'trajectory_length': float(total_length)
+            }), 400
+        
+        if max_distance < 0.5:  # 모든 점이 원점에서 50cm 이내면 비정상
+            return jsonify({
+                'error': f'Generated trajectory is too close to origin (max distance: {max_distance:.2f}m). This may happen when clicking far from the data manifold. Please try clicking closer to existing data points.',
+                'is_invalid': True,
+                'max_distance': float(max_distance)
+            }), 400
+        
+        # Trajectory 분류 (기본값: rule-based)
+        # 생성된 trajectory는 항상 rule-based 분류 사용
         label = classify_trajectory(trajectory_np)
         
         # 2D 좌표 계산 (projected space에서의 위치)
@@ -867,4 +1032,44 @@ if __name__ == '__main__':
         print('Note: React client not built. Run "./build_client.sh" to build the client.')
         print('      Or use API endpoints directly at http://localhost:5000/api/...')
     
-    app.run(host=args.host, port=args.port, debug=True)
+    # Flask 개발 서버 시작
+    import socket
+    
+    def find_free_port(start_port, max_attempts=10):
+        """사용 가능한 포트 찾기"""
+        for i in range(max_attempts):
+            port = start_port + i
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                sock.bind(('', port))
+                sock.close()
+                return port
+            except OSError:
+                continue
+        return None
+    
+    # 포트가 사용 가능한지 먼저 확인
+    actual_port = args.port
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        sock.bind(('', args.port))
+        sock.close()
+    except OSError:
+        # 포트가 사용 중이면 사용 가능한 포트 찾기
+        print(f"\n⚠️  Port {args.port} is already in use.")
+        free_port = find_free_port(args.port)
+        if free_port:
+            print(f"   Using alternative port {free_port}...")
+            actual_port = free_port
+        else:
+            print(f"   Could not find a free port starting from {args.port}.")
+            print(f"   Please either:")
+            print(f"   1. Stop the process using port {args.port}")
+            print(f"   2. Use a different port: python visualization_server/app.py --port 5002")
+            sys.exit(1)
+    
+    # 서버 시작
+    print(f"Starting server on port {actual_port}...")
+    app.run(host=args.host, port=actual_port, debug=True, use_reloader=False)

@@ -68,6 +68,7 @@ class LatentSpacePlot extends Component {
 
     // 라벨별 색상 매핑 (확장된 분류)
     const labelColors = {
+      // Rule-based 분류
       'stop': '#ef4444',           // Red
       'straight': '#f59e0b',        // Orange - 직진
       'straight_sharp': '#fb923c',  // Orange-600 - 급커브 직진
@@ -77,10 +78,18 @@ class LatentSpacePlot extends Component {
       'left_slow': '#60a5fa',       // Blue-400 - 느린 좌회전
       'right': '#10b981',           // Green - 우회전
       'right_sharp': '#059669',     // Green-600 - 급커브 우회전
-      'right_slow': '#34d399'       // Green-400 - 느린 우회전
+      'right_slow': '#34d399',      // Green-400 - 느린 우회전
+      // K-means 클러스터 (k=5)
+      'cluster_0': '#ef4444',       // Red
+      'cluster_1': '#3b82f6',       // Blue
+      'cluster_2': '#10b981',       // Green
+      'cluster_3': '#f59e0b',       // Orange
+      'cluster_4': '#8b5cf6',       // Purple
+      'cluster_unknown': '#94a3b8'  // Gray
     };
     
     const labelNames = {
+      // Rule-based 분류
       'stop': 'Stop',
       'straight': 'Straight',
       'straight_sharp': 'Straight (Sharp)',
@@ -90,11 +99,21 @@ class LatentSpacePlot extends Component {
       'left_slow': 'Left Turn (Slow)',
       'right': 'Right Turn',
       'right_sharp': 'Right Turn (Sharp)',
-      'right_slow': 'Right Turn (Slow)'
+      'right_slow': 'Right Turn (Slow)',
+      // K-means 클러스터
+      'cluster_0': 'Cluster 0',
+      'cluster_1': 'Cluster 1',
+      'cluster_2': 'Cluster 2',
+      'cluster_3': 'Cluster 3',
+      'cluster_4': 'Cluster 4',
+      'cluster_unknown': 'Unknown'
     };
     
     // 라벨을 기본 카테고리로 그룹화 (색상은 유지하되 legend는 간소화)
     const getBaseLabel = (label) => {
+      // K-means 클러스터는 그대로 반환
+      if (label.startsWith('cluster_')) return label;
+      // Rule-based 분류는 기본 카테고리로 그룹화
       if (label === 'stop') return 'stop';
       if (label.startsWith('straight')) return 'straight';
       if (label.startsWith('left')) return 'left';

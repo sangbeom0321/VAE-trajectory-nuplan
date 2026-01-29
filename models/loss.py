@@ -4,7 +4,7 @@ VAE Loss 함수 정의
 Loss 구성:
 - Reconstruction Loss (MSE): 복원된 trajectory와 원본 trajectory 간의 차이
 - KL Divergence Loss: Posterior q(z|x)와 Prior p(z) = N(0, I) 간의 KL divergence
-- Total Loss: L = Reconstruction Loss + β * KL Divergence Loss
+- Total Loss: L = Reconstruction Loss + kl_weight * KL Divergence Loss
 
 이론적 배경:
 VAE의 목적은 Evidence Lower Bound (ELBO)를 최대화하는 것입니다:
@@ -21,7 +21,7 @@ prior p(z) = N(0, I)에 가까워집니다.
 수식:
 - Reconstruction: L_recon = MSE(x, x_recon) = ||x - x_recon||²
 - KL Divergence: L_KL = KL(q(z|x) || N(0, I)) = 0.5 * Σ(σ² + μ² - 1 - log(σ²))
-- Total: L_total = L_recon + β * L_KL
+- Total: L_total = L_recon + kl_weight * L_KL
 """
 
 import torch
@@ -55,11 +55,6 @@ def kl_divergence_loss(mu, logvar, normalize_by_dim=True):
     # 이것은 0.5 * Σ(exp(logvar) + mu² - 1 - logvar)와 수학적으로 동일합니다
     kl = -0.5 * torch.sum(1 + logvar - mu ** 2 - logvar.exp(), dim=1)
     
-    # 정규화: latent_dim으로 나누어 차원당 평균 KL로 변환
-    # 이렇게 하면 Reconstruction loss와 비슷한 스케일이 됨
-    if normalize_by_dim:
-        latent_dim = mu.shape[1]
-        kl = kl / latent_dim
     
     # 배치 평균 반환 (표준 구현과 동일)
     return kl.mean()
@@ -103,13 +98,14 @@ def compute_loss(
     normalize_kl_by_dim=True
 ):
     """
-    VAE Total Loss 계산
+    일반 VAE Loss 계산
     
-    Reconstruction Loss와 KL Divergence Loss를 결합하여 전체 손실을 계산합니다.
+    VAE Loss:
+        L_VAE = L_recon + kl_weight · L_KL
     
-    수식:
-        L_total = L_recon + β * L_KL
-                = MSE(x, x_recon) + β * KL(q(z|x) || N(0, I))
+    이론적 배경:
+    - VAE는 ELBO를 최대화: ELBO = E[log p(x|z)] - KL(q(z|x)||p(z))
+    - Loss로 변환 (최소화): L = -ELBO = -E[log p(x|z)] + KL(q(z|x)||p(z))
     
     Args:
         reconstructed_ego_future_trajectory: (batch, 160) 또는 (batch, T_future, future_dim)
@@ -118,13 +114,13 @@ def compute_loss(
             - 원본 미래 trajectory (ground truth)
         mu: (batch, latent_dim) - Posterior의 평균 벡터
         logvar: (batch, latent_dim) - Posterior의 로그 분산 벡터
-        kl_weight: (float) - KL Loss 가중치 (β 값, 기본값: 1.0)
-        normalize_kl_by_dim: (bool) - KL loss를 latent_dim으로 정규화할지 여부 (기본값: True)
+        kl_weight: (float) - KL Loss 가중치 (기본값: 1.0)
+        normalize_kl_by_dim: (bool) - KL loss를 latent_dim으로 정규화할지 여부 (로깅용, 기본값: True)
     
     Returns:
-        total_loss: (scalar) - 전체 손실 (L_recon + β * L_KL)
+        total_loss: (scalar) - 전체 손실
         recon_loss: (scalar) - 재구성 손실
-        kl_loss: (scalar) - KL divergence 손실 (정규화됨)
+        kl_loss: (scalar) - KL divergence 손실 (정규화됨, 로깅용)
     """
     # 입력 shape 정규화: 3차원인 경우 2차원으로 flatten
     if len(reconstructed_ego_future_trajectory.shape) == 3:
@@ -135,13 +131,40 @@ def compute_loss(
         reconstructed_flat = reconstructed_ego_future_trajectory
         target_flat = ego_future_trajectory
     
-    # Reconstruction Loss 계산
-    recon_loss = reconstruction_loss_mse(reconstructed_flat, target_flat)
+    # -------------------------
+    # 1. Reconstruction Loss
+    # -------------------------
+    # MSE = -log p(x|z) (up to constant)
+    # 이론: -E_q(z|x)[log p(x|z)] ≈ MSE
+    recon_loss = F.mse_loss(reconstructed_flat, target_flat, reduction='mean')
     
-    # KL Divergence Loss 계산 (latent_dim으로 정규화하여 스케일 맞춤)
-    kl_loss = kl_divergence_loss(mu, logvar, normalize_by_dim=normalize_kl_by_dim)
+    # -------------------------
+    # 2. KL Divergence Loss
+    # -------------------------
+    # KL(q(z|x) || N(0,1))
+    # 수식: KL = -0.5 * Σ(1 + logvar - mu² - exp(logvar))
+    # 표준 VAE 구현: 각 샘플의 KL을 먼저 계산하고 배치 평균
+    # KL per sample: -0.5 * sum(1 + logvar - mu² - exp(logvar)) over latent_dim
+    kl_per_sample = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=1)
+    kl_loss = kl_per_sample.mean()  # 배치 평균
     
-    # Total Loss: L = L_recon + β * L_KL
+    # KL divergence는 이론적으로 항상 >= 0이어야 하지만,
+    # 수치적 오류로 인해 약간 음수가 될 수 있으므로 작은 epsilon 추가
+    # clamp는 사용하지 않음 (문제를 숨길 수 있음)
+    kl_loss = kl_loss + 1e-8  # 수치적 안정성을 위한 작은 값 추가
+    
+    # -------------------------
+    # 3. Total Loss (일반 VAE)
+    # -------------------------
+    # L = L_recon + kl_weight · L_KL
     total_loss = recon_loss + kl_weight * kl_loss
     
-    return total_loss, recon_loss, kl_loss
+    # normalize_kl_by_dim이 True면 KL loss를 정규화하여 반환 (로깅용)
+    # 실제 loss 계산에는 사용되지 않음
+    if normalize_kl_by_dim:
+        latent_dim = mu.shape[1]
+        kl_loss_normalized = kl_loss / latent_dim
+    else:
+        kl_loss_normalized = kl_loss
+    
+    return total_loss, recon_loss, kl_loss_normalized

@@ -25,7 +25,7 @@ if project_root not in sys.path:
 from models.trajectory_predictor import TrajectoryPredictor
 from models.vae import reparameterize
 from data.trajectory_dataset import TrajectoryDataset, collate_fn
-from utils.loss import compute_loss
+from models.loss import compute_loss
 
 
 def load_config(config_path):
@@ -113,12 +113,15 @@ def train_epoch(model, dataloader, optimizer, device, config, epoch, num_epochs,
             # Fallback: kl_weight가 전달되지 않은 경우
             kl_weight = get_kl_weight(config)[0]
         
+        # Loss 계산 (일반 VAE)
+        # normalize_kl_by_dim=False로 설정하여 실제 KL loss 값 확인
         loss, recon_loss, kl_loss = compute_loss(
             reconstructed_ego_future_trajectory=output['reconstructed_ego_future_trajectory'],
             ego_future_trajectory=ego_future_trajectory,
             mu=output['mu'],
             logvar=output['logvar'],
-            kl_weight=kl_weight
+            kl_weight=kl_weight,
+            normalize_kl_by_dim=False  # 실제 KL loss 값 확인을 위해 False로 설정
         )
         
         # Backward pass
@@ -633,21 +636,33 @@ def main():
         normalize = data_cfg.get('normalize', True)
         norm_params_path = data_cfg.get('trajectory_norm_params_path', None)
         
-        # norm_params_path가 없거나 존재하지 않으면 자동으로 찾기
-        if normalize and (not norm_params_path or not os.path.exists(norm_params_path)):
-            # 같은 디렉토리에서 _norm_params.json 파일 찾기
-            base_path = trajectory_data_path.replace('_normalized.npz', '').replace('.npz', '')
-            possible_norm_paths = [
-                f"{base_path}_norm_params.json",
-                trajectory_data_path.replace('.npz', '_norm_params.json'),
-                os.path.join(os.path.dirname(trajectory_data_path), 'trajectories_8s_norm_params.json')
-            ]
-            for path in possible_norm_paths:
-                if os.path.exists(path):
-                    norm_params_path = path
-                    break
+        # norm_params_path 처리 로직
+        if normalize:
+            # 1. config에 경로가 있고 파일이 존재하면 사용
+            if norm_params_path and os.path.exists(norm_params_path):
+                # 이미 올바른 경로 설정됨
+                pass
+            # 2. config에 경로가 있지만 파일이 없으면 저장 경로로 사용 (계산 후 저장됨)
+            elif norm_params_path:
+                # config에 설정된 경로를 저장 경로로 사용 (파일이 없어도 OK)
+                pass
+            # 3. config에 경로가 없으면 자동으로 생성
             else:
-                norm_params_path = None
+                # 같은 디렉토리에서 _norm_params.json 파일 찾기
+                base_path = trajectory_data_path.replace('_normalized.npz', '').replace('.npz', '')
+                possible_norm_paths = [
+                    f"{base_path}_norm_params.json",
+                    trajectory_data_path.replace('.npz', '_norm_params.json'),
+                    os.path.join(os.path.dirname(trajectory_data_path), 'trajectories_8s_norm_params.json')
+                ]
+                # 기존 파일이 있으면 사용
+                for path in possible_norm_paths:
+                    if os.path.exists(path):
+                        norm_params_path = path
+                        break
+                else:
+                    # 기존 파일이 없으면 첫 번째 경로를 저장 경로로 사용
+                    norm_params_path = possible_norm_paths[0]
         
         print(f"TrajectoryDataset 사용: {trajectory_data_path}")
         print(f"  정규화: {'사용' if normalize else '사용하지 않음'}")

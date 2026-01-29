@@ -4,9 +4,9 @@
 # 사용법: ./start_server.sh [체크포인트_경로] [포트] [호스트]
 
 # 기본 설정
-CHECKPOINT_PATH="${1:-train/train_output/vae-planner-training/2026-01-28-12:56:00/checkpoints/checkpoint_epoch_234.pth}"
+CHECKPOINT_PATH="${1:-}"  # 기본값 없음: 자동 탐색 사용
 CONFIG_PATH="${2:-train/config.yaml}"
-PORT="${3:-5000}"
+PORT="${3:-5001}"
 HOST="${4:-0.0.0.0}"  # 0.0.0.0으로 설정하면 외부 접근 가능
 
 # 프로젝트 루트로 이동

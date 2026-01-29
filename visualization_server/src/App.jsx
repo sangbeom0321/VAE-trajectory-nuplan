@@ -19,6 +19,7 @@ class App extends Component {
       loading: false,
       error: null,
       method: 'pca',  // 기본값: PCA (역변환 가능)
+      classificationMethod: 'rule',  // 'rule' or 'kmeans'
       isGenerated: false,  // 생성된 trajectory인지 여부
       mode: 'browse',  // 'browse' 또는 'generate'
       checkpoints: [],  // 사용 가능한 체크포인트 목록
@@ -28,6 +29,7 @@ class App extends Component {
     
     this.handleLatentHover = this.handleLatentHover.bind(this);
     this.handleMethodChange = this.handleMethodChange.bind(this);
+    this.handleClassificationMethodChange = this.handleClassificationMethodChange.bind(this);
     this.handleLatentClick = this.handleLatentClick.bind(this);
     this.handleModeChange = this.handleModeChange.bind(this);
     this.handleCheckpointChange = this.handleCheckpointChange.bind(this);
@@ -36,7 +38,7 @@ class App extends Component {
   componentDidMount() {
     this.loadCheckpoints();
     this.loadDatasetInfo();
-    this.loadLatentSpace(this.state.method);
+    this.loadLatentSpace(this.state.method, this.state.classificationMethod);
   }
   
   async loadCheckpoints() {
@@ -90,7 +92,7 @@ class App extends Component {
         selectedTrajectory: null,
         selectedLatent: null
       });
-      await this.loadLatentSpace(this.state.method);
+      await this.loadLatentSpace(this.state.method, this.state.classificationMethod);
       
       this.setState({ loadingCheckpoint: false });
     } catch (error) {
@@ -104,7 +106,12 @@ class App extends Component {
   
   handleMethodChange(method) {
     this.setState({ method, latentSpaceData: null, selectedTrajectory: null, selectedLatent: null });
-    this.loadLatentSpace(method);
+    this.loadLatentSpace(method, this.state.classificationMethod);
+  }
+
+  handleClassificationMethodChange(classificationMethod) {
+    this.setState({ classificationMethod, latentSpaceData: null, selectedTrajectory: null, selectedLatent: null });
+    this.loadLatentSpace(this.state.method, classificationMethod);
   }
 
   async loadDatasetInfo() {
@@ -117,7 +124,7 @@ class App extends Component {
     }
   }
 
-  async loadLatentSpace(method = 'pca') {
+  async loadLatentSpace(method = 'pca', classificationMethod = 'rule') {
     this.setState({ loading: true, error: null });
     
     try {
@@ -126,6 +133,7 @@ class App extends Component {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           method: method,  // 'pca', 'tsne', or 'umap'
+          classification_method: classificationMethod,  // 'rule' or 'kmeans'
           max_samples: 5000  // 샘플 수를 5,000개로 고정
         })
       });
@@ -373,6 +381,23 @@ class App extends Component {
                   disabled={this.state.loading || this.state.loadingCheckpoint}
                 >
                   UMAP
+                </button>
+              </div>
+              <div className="method-selector">
+                <label>Classification: </label>
+                <button 
+                  className={this.state.classificationMethod === 'rule' ? 'active' : ''}
+                  onClick={() => this.handleClassificationMethodChange('rule')}
+                  disabled={this.state.loading || this.state.loadingCheckpoint}
+                >
+                  Rule-based
+                </button>
+                <button 
+                  className={this.state.classificationMethod === 'kmeans' ? 'active' : ''}
+                  onClick={() => this.handleClassificationMethodChange('kmeans')}
+                  disabled={this.state.loading || this.state.loadingCheckpoint}
+                >
+                  K-means (k=5)
                 </button>
               </div>
               <div className="mode-selector">

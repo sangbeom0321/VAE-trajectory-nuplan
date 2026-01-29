@@ -3,9 +3,9 @@
 # Data Configuration
 data:
   # 8초 경로 데이터셋 설정
-  trajectory_data_path: "$HOME/99_dataset/01_nuplan/dataset/exp2/trajectories_8s.npz"
+  trajectory_data_path: "$HOME/99_dataset/01_nuplan/dataset/vae/trajectories_8s.npz"
   # 정규화 파라미터 경로 (없으면 데이터셋에서 자동 계산)
-  trajectory_norm_params_path: "$HOME/99_dataset/01_nuplan/dataset/exp2/trajectories_8s_norm_params.json"
+  trajectory_norm_params_path: "$HOME/99_dataset/01_nuplan/dataset/vae/trajectories_8s_norm_params.json"
   # 정규화 적용 여부
   normalize: true
   # 사용할 최대 샘플 수 (None이면 전체 데이터 사용)
@@ -19,42 +19,27 @@ model:
   
   # VAE Configuration
   latent_dim: 32  # Latent variable z의 차원 (8초 경로용: 32차원)
-  kl_weight: 0.01  # KLD Loss 가중치 (β 값) - Annealing 사용 시에는 end_weight가 우선됨
-  # β-VAE Annealing 설정 (Reconstruction 성능과 Latent Space 분리 개선을 위한 전략)
-  kl_annealing:
-    enabled: true  # Annealing 활성화: 초기에는 reconstruction에 집중, 후기에는 latent space 분리 강화
-    start_weight: 0.0001  # 시작 KL weight (극도로 낮게 시작하여 reconstruction에 완전 집중, recon error 0.0001 목표)
-    end_weight: 0.5  # 최종 KL weight (1.0에서 0.5로 낮춰서 더 보수적으로 증가, reconstruction 성능 보호)
-    annealing_type: "cosine"  # "cosine": 부드러운 전환으로 더 안정적인 학습
-    warmup_epochs: 50  # 처음 50 에포크 동안은 start_weight 유지 (reconstruction error 0.0001 달성에 충분한 시간 확보)
-    # Adaptive Annealing 설정 (Reconstruction error 증가 시 KL weight 증가 일시 중지 또는 감소)
-    adaptive: true  # Adaptive annealing 활성화: recon error 증가 시 KL weight 증가 멈춤 또는 감소
-    recon_threshold: 1.02  # Reconstruction error 증가 허용 임계값 (1.02 = 2% 증가까지 허용, 그 이상이면 KL weight 증가 멈춤)
-    recon_patience: 1  # Reconstruction error 증가 후 기다릴 epoch 수 (1 epoch만 증가 추세면 즉시 KL weight 증가 멈춤)
-    recon_reduce_factor: 0.8  # Reconstruction error 증가 시 KL weight 감소 비율 (현재 weight * factor)
-    recon_reduce_on_increase: true  # Reconstruction error 증가 시 KL weight를 감소시킬지 여부
+  kl_weight: 0.0001  # KL Divergence Loss 가중치 (일반 VAE는 보통 1.0)
 
 # Training Configuration
 training:
   batch_size: 32
   num_epochs: 500
-  learning_rate: 1.5e-4  # Reconstruction error 0.0001 목표를 위해 약간 높은 학습률로 시작
+  learning_rate: 1.5e-4
   weight_decay: 1e-5
   gradient_clip: 1.0
-  # Learning Rate Scheduler 설정 (reconstruction error 개선이 없을 때 학습률 조정)
+  # Learning Rate Scheduler 설정
   lr_scheduler:
-    enabled: true  # 학습률 스케줄러 사용 여부
+    enabled: true
     mode: "min"  # "min": reconstruction error 감소 모니터링
-    factor: 0.7  # 학습률 감소 비율 (개선이 없을 때 현재 학습률 * factor, 0.5보다 완만하게)
-    patience: 8  # 개선이 없을 때 기다릴 epoch 수 (8 epochs 동안 개선 없으면 학습률 감소, warmup 기간 고려)
-    threshold: 1e-5  # 개선으로 간주할 최소 변화량 (recon error 0.0001 목표에 맞게 더 작은 threshold)
-    min_lr: 1e-7  # 최소 학습률 (이보다 낮아지지 않음, 더 낮은 recon error를 위해 더 작은 학습률 허용)
-    cooldown: 2  # 학습률 감소 후 대기할 epoch 수 (2 epochs 대기하여 안정화)
+    factor: 0.7  # 학습률 감소 비율
+    patience: 8  # 개선이 없을 때 기다릴 epoch 수
+    threshold: 1e-5  # 개선으로 간주할 최소 변화량
+    min_lr: 1e-7  # 최소 학습률
+    cooldown: 2  # 학습률 감소 후 대기할 epoch 수
 
 # Logging Configuration
 logging:
   log_dir: "./logs"
   save_dir: "./checkpoints"
-  log_interval: 100  # 배치마다 로깅 간격
-
   save_interval: 5  # 에포크마다 체크포인트 저장 간격
